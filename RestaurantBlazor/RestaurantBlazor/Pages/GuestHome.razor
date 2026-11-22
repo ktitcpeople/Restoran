@@ -1,0 +1,79 @@
+@page "/guest-home"
+@layout MainLayout
+@implements IAsyncDisposable
+@using RestaurantBlazor.Models
+@using RestaurantBlazor.Services
+@inject ApiService Api
+@inject IAuthService Auth
+@inject KitchenHubService Hub
+@inject NavigationManager Nav
+
+<PageTitle>Главная гостя</PageTitle>
+<section class="guest-welcome">
+    <div><span class="eyebrow">ДОБРО ПОЖАЛОВАТЬ ДОМОЙ</span><h1>Сегодня — повод<br />собраться у очага.</h1><p>Выберите любимые блюда. А мы приготовим их с теплом.</p><button class="btn btn-warning" @onclick='() => Nav.NavigateTo("/guest")'>К нашему столу <i class="bi bi-arrow-up-right ms-3"></i></button></div>
+    <img src="img/hearth-scene.svg" alt="Ужин у тёплого очага" />
+</section>
+<section class="loyalty-overview" aria-label="Программа лояльности и специальные предложения">
+    <article><h3><i class="bi bi-stars me-2"></i>Программа лояльности</h3><p>10% скидка на первый заказ, 5% на каждый пятый. В день рождения — 10% при посещении ресторана в течение трёх дней до или после даты.</p></article>
+    <article><h3><i class="bi bi-cake2 me-2"></i>Скидка ко дню рождения</h3><p>Акция действует один раз в календарный год и применяется к заказу в ресторане.</p></article>
+    <article><h3><i class="bi bi-egg-fried me-2"></i>Комбо и бизнес-ланчи</h3><p>Новые наборы доступны в меню ресторана.</p><button class="btn btn-warning btn-sm mt-2" @onclick='() => Nav.NavigateTo("/guest")'>Посмотреть меню</button></article>
+</section>
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
+    <div><h2 class="fw-bold mb-1">Здравствуйте, @Auth.GetCurrentUserName()!</h2><div class="text-muted">Здесь отображаются ваши последние заказы.</div></div>
+    <div class="d-flex gap-2"><button class="btn btn-outline-secondary" @onclick="Load" disabled="@loading"><i class="bi bi-arrow-clockwise me-1"></i>Обновить</button><button class="btn btn-warning" @onclick='() => Nav.NavigateTo("/guest")'><i class="bi bi-cup-hot me-1"></i>Открыть меню</button></div>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(message)) { <div class="alert alert-info app-notice" role="status">@message<button class="app-notice-close" aria-label="Закрыть" @onclick="() => message = string.Empty">×</button></div> }
+@if (loading) { <div class="text-center py-5"><div class="spinner-border text-warning"></div></div> }
+else if (!orders.Any())
+{
+    <div class="card border-0 shadow-sm"><div class="card-body text-center py-5"><i class="bi bi-receipt text-muted" style="font-size:44px"></i><h5 class="mt-3">Заказов пока нет</h5><p class="text-muted">Оформите первый заказ в меню ресторана.</p><button class="btn btn-warning" @onclick='() => Nav.NavigateTo("/guest")'>Перейти к меню</button></div></div>
+}
+else
+{
+    @foreach (var order in orders.Take(10))
+    {
+        <article class="card border-0 shadow-sm mb-3"><div class="card-body">
+            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap"><div><h5 class="fw-bold mb-1">Заказ №@order.OrderID</h5><div class="small text-muted">@order.CreatedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm") · @OrderType(order.Type)@(order.TableNumber.HasValue ? $" · стол {order.TableNumber}" : "")</div></div><span class="badge @StatusClass(order.Status)">@StatusName(order.Status)</span></div>
+            <ul class="list-unstyled my-3">@foreach (var item in order.Items){<li class="d-flex justify-content-between py-1"><span>@item.Name × @item.Quantity</span><span>@((item.UnitPrice * item.Quantity).ToString("N0")) ₽</span></li>}</ul>
+            @if (!string.IsNullOrWhiteSpace(order.DeliveryStatus)) { <div class="small text-info mb-2">Доставка: @order.DeliveryStatus@(order.EstimatedArrival.HasValue ? $" · прибытие около {order.EstimatedArrival.Value.ToLocalTime():HH:mm}" : "")</div> }
+            <div class="border-top pt-2 d-flex justify-content-between fw-bold"><span>Итого</span><span>@order.TotalPrice.ToString("N0") ₽</span></div>
+        </div></article>
+    }
+}
+
+@code {
+    private List<GuestOrderDto> orders = new();
+    private bool loading = true;
+    private string message = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Auth.InitializeAsync();
+        if (Auth.GetCurrentRole() != 4) { Nav.NavigateTo("/", true); return; }
+        Hub.OnOrderUpdated += OnOrderUpdated;
+        Hub.OnOrderStatusChanged += OnOrderStatusChanged;
+        await Hub.StartAsync();
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        orders = await Api.GetMyOrdersAsync();
+        loading = false;
+    }
+
+    private void OnOrderUpdated() => _ = InvokeAsync(Load);
+    private void OnOrderStatusChanged(string update) { message = update; _ = InvokeAsync(Load); }
+    private static string OrderType(string type) => type switch { "DineIn" => "В ресторане", "Delivery" => "Доставка", "Takeaway" => "Самовывоз", _ => type };
+    private static string StatusName(string status) => status switch { "New" => "Принят", "Preparing" => "Готовится", "Ready" => "Готов", "Paid" => "Оплачен", "Cancelled" => "Отменён", _ => status };
+    private static string StatusClass(string status) => status switch { "New" => "text-bg-primary", "Preparing" => "text-bg-warning", "Ready" => "text-bg-success", "Paid" => "text-bg-secondary", _ => "text-bg-danger" };
+
+    public ValueTask DisposeAsync()
+    {
+        Hub.OnOrderUpdated -= OnOrderUpdated;
+        Hub.OnOrderStatusChanged -= OnOrderStatusChanged;
+        return ValueTask.CompletedTask;
+    }
+}

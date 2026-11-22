@@ -1,0 +1,35 @@
+@page "/staff"
+@layout MainLayout
+@inject ApiService Api
+@inject IAuthService Auth
+@inject NavigationManager Nav
+
+<PageTitle>Персонал</PageTitle>
+<h2 class="fw-bold mb-3"><i class="bi bi-people-fill me-2"></i>Персонал ресторана</h2>
+@if (users.Count > 0)
+{
+    <div class="alert alert-light border mb-3"><i class="bi bi-geo-alt me-2 text-danger"></i>В списке показан персонал филиала <strong>@users[0].BranchName</strong>. Новый сотрудник будет закреплён за филиалом администратора.</div>
+}
+<div class="card border-0 shadow-sm mb-4"><div class="card-body">
+    <h5>Добавить сотрудника</h5>
+    <div class="row g-2"><div class="col-md-3"><input required minlength="2" data-kind="name" maxlength="80" class="form-control" @bind="form.UserName" placeholder="Имя" /></div><div class="col-md-3"><input required minlength="3" data-kind="login" maxlength="64" class="form-control" @bind="form.Login" placeholder="Логин" /></div><div class="col-md-3"><input required minlength="6" maxlength="128" class="form-control" type="password" @bind="form.Password" placeholder="Пароль, минимум 6 символов" /></div><div class="col-md-3"><select  class="form-select" @bind="form.Role"><option value="1">Администратор</option><option value="2">Официант</option><option value="3">Повар</option><option value="5">Курьер</option><option value="6">Оператор поддержки</option><option value="7">Поставщик</option></select></div></div>
+    <button class="btn btn-warning mt-3" data-validate="true" @onclick="Create">Создать аккаунт</button>
+    @if (!string.IsNullOrEmpty(message)) { <span class="ms-3">@message</span> }
+</div></div>
+<div class="table-responsive card border-0 shadow-sm"><table class="table align-middle mb-0"><thead><tr><th>Сотрудник</th><th>Филиал</th><th>Роль</th><th>Изменить роль</th></tr></thead><tbody>
+    @foreach (var u in users)
+    {
+        <tr><td>@u.UserName <small class="text-muted">#@u.UserID</small></td><td><span class="badge text-bg-light"><i class="bi bi-geo-alt me-1"></i>@(string.IsNullOrWhiteSpace(u.BranchName) ? $"Филиал #{u.BranchID}" : u.BranchName)</span></td><td>@RoleName(u.RoleID)</td><td><select class="form-select form-select-sm" value="@u.RoleID" @onchange="e => ChangeRole(u.UserID, e.Value?.ToString())"><option value="1">Администратор</option><option value="2">Официант</option><option value="3">Повар</option><option value="4">Гость</option><option value="5">Курьер</option><option value="6">Оператор поддержки</option><option value="7">Поставщик</option></select></td></tr>
+    }
+</tbody></table></div>
+
+@code {
+    private List<UserMini> users = new();
+    private RegisterRequest form = new() { Role = 2 };
+    private string message = "";
+    protected override async Task OnInitializedAsync() { await Auth.InitializeAsync(); if (Auth.GetCurrentRole() != 1) { Nav.NavigateTo("/home", true); return; } await Load(); }
+    private async Task Load() => users = await Api.GetUsersAsync();
+    private async Task Create() { var r = await Api.CreateStaffAsync(form); message = r?.Message ?? (r?.Status == true ? "Сотрудник создан" : "Ошибка создания"); if (r?.Status == true) { form = new() { Role = 2 }; await Load(); } }
+    private async Task ChangeRole(int id, string? value) { if (int.TryParse(value, out var role)) { var r = await Api.ChangeUserRoleAsync(id, role); message = r?.Message ?? "Роль изменена"; await Load(); } }
+    private static string RoleName(int role) => role switch { 1 => "Администратор", 2 => "Официант", 3 => "Повар", 4 => "Гость", 5 => "Курьер", 6 => "Оператор поддержки", 7 => "Поставщик", _ => "—" };
+}

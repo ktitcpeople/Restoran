@@ -1,0 +1,50 @@
+@page "/supplier"
+@layout MainLayout
+@using RestaurantBlazor.Models
+@using RestaurantBlazor.Services
+@inject ApiService Api
+@inject IAuthService Auth
+@inject NavigationManager Nav
+
+<PageTitle>Поставки</PageTitle>
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2"><div><h2 class="fw-bold mb-1"><i class="bi bi-box-seam me-2"></i>Заявки на поставку</h2><p class="text-muted mb-0">Подтвердите заказы, направленные администратором.</p></div><button class="btn btn-outline-secondary" @onclick="Load"><i class="bi bi-arrow-clockwise me-1"></i>Обновить</button></div>
+@if (!string.IsNullOrWhiteSpace(message)) { <div class="alert app-notice @(isError ? "alert-danger" : "alert-success")" role="@(isError ? "alert" : "status")">@message<button class="app-notice-close" aria-label="Закрыть" @onclick="() => message = string.Empty">×</button></div> }
+@if (loading) { <div class="text-center py-5"><div class="spinner-border text-warning"></div></div> }
+else if (!requests.Any()) { <div class="card border-0 shadow-sm"><div class="card-body text-center text-muted py-5"><i class="bi bi-inbox" style="font-size:42px"></i><div class="mt-2">Новых заявок пока нет</div></div></div> }
+else
+{
+    <div class="row g-3">
+        @foreach (var request in requests)
+        {
+            <div class="col-12 col-lg-6"><article class="card border-0 shadow-sm h-100"><div class="card-body">
+                <div class="d-flex justify-content-between align-items-start"><div><span class="text-muted small">Заявка #@request.SupplyRequestID</span><h5 class="fw-bold mt-1">@request.IngredientName</h5></div><span class="badge @(request.Status == "Requested" ? "text-bg-warning" : request.Status == "Accepted" ? "text-bg-success" : "text-bg-secondary")">@StatusName(request.Status)</span></div>
+                <div class="fs-5 fw-bold">Количество: @request.Quantity</div><div class="text-muted small mt-2">Получена: @request.CreatedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</div>
+                @if (request.Status == "Requested") { <button class="btn btn-success mt-3" @onclick="() => Accept(request.SupplyRequestID)"><i class="bi bi-check2-circle me-1"></i>Принять заказ</button> }
+                @if (request.Status == "Accepted") { <div class="small text-success mt-3">Заказ подтверждён. Администратор отметит поступление товара на склад.</div> }
+            </div></article></div>
+        }
+    </div>
+}
+
+@code {
+    private List<SupplyRequestDto> requests = new();
+    private bool loading = true, isError;
+    private string message = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Auth.InitializeAsync();
+        if (Auth.GetCurrentRole() != 7) { Nav.NavigateTo("/home", true); return; }
+        await Load();
+    }
+
+    private async Task Load() { loading = true; requests = await Api.GetSupplyRequestsAsync(); loading = false; }
+    private async Task Accept(int id)
+    {
+        var result = await Api.AcceptSupplyAsync(id);
+        message = result?.Message ?? "Не удалось подтвердить заявку.";
+        isError = result?.Status != true;
+        if (!isError) await Load();
+    }
+    private static string StatusName(string status) => status switch { "Requested" => "Ожидает ответа", "Accepted" => "Принята", "Received" => "Получена", _ => status };
+}

@@ -1,0 +1,123 @@
+@page "/support-operator"
+@layout MainLayout
+@implements IAsyncDisposable
+@inject ApiService Api
+@inject IAuthService Auth
+@inject KitchenHubService Hub
+@inject NavigationManager Nav
+
+<PageTitle>Техподдержка</PageTitle>
+<h2 class="fw-bold mb-1"><i class="bi bi-headset me-2"></i>Очередь техподдержки</h2>
+<p class="text-muted">Эскалированные обращения и переписка с пользователями</p>
+@if (!string.IsNullOrWhiteSpace(liveNotice))
+{
+    <div class="alert alert-info app-notice" role="status"><i class="bi bi-bell me-2"></i>@liveNotice<button class="app-notice-close" aria-label="Закрыть" @onclick="() => liveNotice = string.Empty">×</button></div>
+}
+<div class="row g-3">
+    <div class="col-md-4"><div class="list-group shadow-sm">
+        @foreach (var ticket in tickets)
+        {
+            <button class="list-group-item list-group-item-action @(ticket.ConversationID == activeId ? "active" : "")" @onclick="() => Open(ticket)">
+                <div class="d-flex justify-content-between"><strong>#@ticket.TicketID</strong><small>@ticket.CreatedAt.ToLocalTime().ToString("dd.MM HH:mm")</small></div>
+                <div class="text-truncate">@ticket.Subject</div><small>Пользователь #@ticket.UserID</small>
+            </button>
+        }
+        @if (!tickets.Any()) { <div class="list-group-item text-muted">Открытых обращений нет</div> }
+    </div></div>
+    <div class="col-md-8"><div class="card border-0 shadow-sm">
+        <div class="card-header bg-white fw-bold">@(activeId.HasValue ? $"Диалог #{activeId}" : "Выберите обращение")</div>
+        <div class="card-body support-chat-window">
+            @foreach (var item in messages)
+            {
+                var isOperatorMessage = item.Sender == "operator";
+                <div class="support-chat-row @(isOperatorMessage ? "outgoing" : "incoming")">
+                    <div class="support-chat-bubble">
+                        <small class="support-chat-meta">@(isOperatorMessage ? "Вы" : item.Sender == "assistant" ? "Поддержка" : "Клиент") · @item.CreatedAt.ToLocalTime().ToString("dd.MM HH:mm")</small>
+                        <div class="support-chat-text">@item.Content</div>
+                    </div>
+                </div>
+            }
+        </div>
+        <div class="card-footer bg-white">
+            <textarea  maxlength="4000" class="form-control mb-2" rows="3" @bind="reply" placeholder="Ответ пользователю"></textarea>
+            <div class="d-flex justify-content-between align-items-center"><label><input type="checkbox" @bind="resolve" /> Закрыть тикет после ответа</label><button class="btn btn-warning" disabled="@(!activeId.HasValue || string.IsNullOrWhiteSpace(reply))" data-validate="true" @onclick="SendReply">Отправить ответ</button></div>
+        </div>
+    </div></div>
+</div>
+
+<style>
+    .support-chat-window { height: 52vh; min-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+    .support-chat-row { display: flex; width: 100%; }
+    .support-chat-row.incoming { justify-content: flex-start; }
+    .support-chat-row.outgoing { justify-content: flex-end; }
+    .support-chat-bubble { width: fit-content; max-width: min(82%, 560px); padding: 10px 14px; border-radius: 16px; box-shadow: 0 1px 2px rgba(35, 30, 24, .08); }
+    .incoming .support-chat-bubble { background: #f1f2f4; border-bottom-left-radius: 5px; }
+    .outgoing .support-chat-bubble { background: #f5e5d7; border-bottom-right-radius: 5px; }
+    .support-chat-meta { display: block; margin-bottom: 4px; color: #746b63; font-size: 12px; }
+    .outgoing .support-chat-meta { text-align: right; color: #8b563c; }
+    .support-chat-text { white-space: pre-wrap; overflow-wrap: anywhere; text-align: left; }
+    @@media (max-width: 575.98px) { .support-chat-window { height: 55vh; padding: 14px; } .support-chat-bubble { max-width: 92%; } }
+</style>
+
+<div class="card border-0 shadow-sm mt-4"><div class="card-header bg-white d-flex justify-content-between align-items-center"><strong><i class="bi bi-receipt-cutoff me-2"></i>Активные заказы</strong><button class="btn btn-sm btn-outline-secondary" @onclick="LoadOrders">Обновить</button></div>
+    @if (!orders.Any()) { <div class="card-body text-muted">Активных заказов нет</div> }
+    else { <div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>Заказ</th><th>Тип</th><th>Статус</th><th>Сумма</th><th></th></tr></thead><tbody>
+        @foreach (var order in orders.Where(o => o.Status is not ("Cancelled" or "Paid")))
+        { <tr><td>#@order.OrderID</td><td>@OrderType(order.Type)</td><td>@OrderStatus(order.Status)</td><td>@order.TotalPrice.ToString("N0") ₽</td><td class="text-end"><button class="btn btn-sm btn-outline-danger" @onclick="() => CancelOrder(order.OrderID)">Отменить заказ</button></td></tr> }
+    </tbody></table></div> }
+</div>
+
+@code {
+    private List<SupportTicketDto> tickets = new();
+    private List<Order> orders = new();
+    private List<SupportMessageDto> messages = new();
+    private int? activeId;
+    private string reply = "";
+    private bool resolve;
+    protected override async Task OnInitializedAsync()
+    {
+        await Auth.InitializeAsync();
+        if (Auth.GetCurrentRole() != 6) { Nav.NavigateTo("/home", true); return; }
+        Hub.OnSupportTicketCreated += SupportUpdated;
+        Hub.OnSupportMessageReceived += SupportUpdated;
+        Hub.OnOrderUpdated += OrderUpdated;
+        await Hub.StartAsync(); await Hub.JoinSupportOperatorsAsync();
+        await LoadTickets();
+        await LoadOrders();
+    }
+    private async Task LoadTickets()
+    {
+        tickets = await Api.GetSupportTicketsAsync();
+        if (activeId.HasValue && tickets.All(t => t.ConversationID != activeId)) { activeId = null; messages.Clear(); }
+    }
+    private async Task Open(SupportTicketDto ticket) { activeId = ticket.ConversationID; messages = await Api.GetSupportMessagesAsync(ticket.ConversationID); resolve = false; }
+    private string liveNotice = "";
+    private void SupportUpdated(int conversationId)
+    {
+        _ = InvokeAsync(async () =>
+        {
+            await LoadTickets();
+            if (activeId == conversationId)
+                messages = await Api.GetSupportMessagesAsync(conversationId);
+            liveNotice = $"Новое сообщение в обращении #{conversationId}";
+            StateHasChanged();
+        });
+    }
+    private async Task SendReply()
+    {
+        if (!activeId.HasValue) return;
+        var result = await Api.ReplySupportAsync(activeId.Value, new SupportReplyRequest { Message = reply.Trim(), Resolve = resolve });
+        if (result?.Status == true) { reply = ""; await LoadTickets(); messages = await Api.GetSupportMessagesAsync(activeId.Value); }
+    }
+    private async Task LoadOrders() => orders = await Api.GetOrdersForSupportAsync();
+    private void OrderUpdated() => _ = InvokeAsync(LoadOrders);
+    private async Task CancelOrder(int id)
+    {
+        var result = await Api.CancelOrderForSupportAsync(id);
+        if (result?.Status == true) { liveNotice = $"Заказ #{id} отменён"; await LoadOrders(); }
+        else liveNotice = result?.Message ?? "Не удалось отменить заказ";
+    }
+    private static string OrderType(string type) => type switch { "DineIn" => "В зале", "Delivery" => "Доставка", "Takeaway" => "Самовывоз", _ => type };
+    private static string OrderStatus(string status) => status switch { "New" => "Новый", "Preparing" => "На кухне", "Ready" => "Готов", _ => status };
+    public ValueTask DisposeAsync() { Hub.OnSupportTicketCreated -= SupportUpdated; Hub.OnSupportMessageReceived -= SupportUpdated; Hub.OnOrderUpdated -= OrderUpdated; return ValueTask.CompletedTask; }
+}

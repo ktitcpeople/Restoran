@@ -1,0 +1,359 @@
+@page "/home"
+@layout MainLayout
+@implements IAsyncDisposable
+@using RestaurantBlazor.Services
+@using RestaurantBlazor.Models
+@inject ApiService Api
+@inject IAuthService AuthService
+@inject KitchenHubService HubService
+@inject NavigationManager Nav
+
+<PageTitle>Главная</PageTitle>
+
+@if (!AuthService.IsAuthenticated())
+{
+    <div class="alert alert-info">Войдите в систему</div>
+}
+else
+{
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+        <div>
+            <h2 class="fw-bold mb-1">@Greeting, @AuthService.GetCurrentUserName()</h2>
+            <div class="text-muted small">@DateTime.Now.ToString("dddd, dd MMMM yyyy") · @AuthService.GetRoleName()</div>
+        </div>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="ReloadAll" disabled="@isLoading">
+            <i class="bi bi-arrow-clockwise me-1"></i>@(isLoading ? "Загрузка..." : "Обновить")
+        </button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(liveNotification))
+    {
+        <div class="alert alert-info d-flex align-items-center mb-3">
+            <i class="bi bi-bell me-2"></i>@liveNotification
+        </div>
+    }
+
+    <!-- Счётчики -->
+    <div class="row g-3 mb-4 row-cols-2 row-cols-md-4">
+        <div class="col">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="text-muted small mb-1">Активных заказов</div>
+                        <div class="fs-2 fw-bold lh-1">@activeOrders.Count</div>
+                    </div>
+                    <div class="d-inline-flex align-items-center justify-content-center rounded-circle flex-shrink-0"
+                         style="width:44px; height:44px; background:#fde8eb; color:#c8102e;">
+                        <i class="bi bi-receipt-cutoff fs-5"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="text-muted small mb-1">На кухне</div>
+                        <div class="fs-2 fw-bold lh-1">@preparingCount</div>
+                    </div>
+                    <div class="d-inline-flex align-items-center justify-content-center rounded-circle flex-shrink-0"
+                         style="width:44px; height:44px; background:#fef3c7; color:#d97706;">
+                        <i class="bi bi-fire fs-5"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="text-muted small mb-1">Готово</div>
+                        <div class="fs-2 fw-bold lh-1">@readyCount</div>
+                    </div>
+                    <div class="d-inline-flex align-items-center justify-content-center rounded-circle flex-shrink-0"
+                         style="width:44px; height:44px; background:#dcfce7; color:#15803d;">
+                        <i class="bi bi-check2-circle fs-5"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="text-muted small mb-1">Низких остатков</div>
+                        <div class="fs-2 fw-bold lh-1">@lowStockCount</div>
+                    </div>
+                    <div class="d-inline-flex align-items-center justify-content-center rounded-circle flex-shrink-0"
+                         style="width:44px; height:44px; background:#fee2e2; color:#991b1b;">
+                        <i class="bi bi-exclamation-triangle fs-5"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Выручка за смену (только для Администратора) -->
+    @if (AuthService.GetCurrentRole() == 1 && shiftRevenue != null)
+    {
+        <div class="row g-3 mb-4 row-cols-1 row-cols-md-3">
+            <div class="col">
+                <div class="card border-0 shadow-sm h-100" style="border-left: 4px solid #c8102e !important;">
+                    <div class="card-body d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="text-muted small mb-1">Выручка за смену</div>
+                            <div class="fs-3 fw-bold lh-1 text-success">@shiftRevenue.TotalRevenue.ToString("N0") ₽</div>
+                            <div class="text-muted" style="font-size:11px;">с @shiftRevenue.ShiftStart.ToLocalTime().ToString("HH:mm")</div>
+                        </div>
+                        <div class="d-inline-flex align-items-center justify-content-center rounded-circle flex-shrink-0"
+                             style="width:44px; height:44px; background:#dcfce7; color:#15803d;">
+                            <i class="bi bi-cash-stack fs-5"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="text-muted small mb-1">Заказов за смену</div>
+                            <div class="fs-3 fw-bold lh-1">@shiftRevenue.OrderCount</div>
+                        </div>
+                        <div class="d-inline-flex align-items-center justify-content-center rounded-circle flex-shrink-0"
+                             style="width:44px; height:44px; background:#dbeafe; color:#1e40af;">
+                            <i class="bi bi-receipt fs-5"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="text-muted small mb-1">Средний чек за смену</div>
+                            <div class="fs-3 fw-bold lh-1">@shiftRevenue.AverageCheck.ToString("N0") ₽</div>
+                        </div>
+                        <div class="d-inline-flex align-items-center justify-content-center rounded-circle flex-shrink-0"
+                             style="width:44px; height:44px; background:#fef3c7; color:#d97706;">
+                            <i class="bi bi-graph-up fs-5"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (AuthService.GetCurrentRole() == 1 && hallSummary != null)
+    {
+        <div class="card border-0 shadow-sm mb-4"><div class="card-body d-flex flex-wrap gap-4 align-items-center"><div><div class="text-muted small">Загрузка зала</div><strong class="fs-4">@hallSummary.OccupancyRate%</strong></div><div><div class="text-muted small">Занято</div><strong>@hallSummary.OccupiedTables / @hallSummary.TotalTables столов</strong></div><div><div class="text-muted small">Свободно</div><strong>@hallSummary.FreeTables</strong></div><div><div class="text-muted small">Бронирования сегодня</div><strong>@hallSummary.ReservationsToday.Count</strong></div><a class="btn btn-outline-warning ms-auto" href="/tables">План зала</a></div></div>
+    }
+
+    <div class="row g-3">
+        <div class="col-12 col-lg-8">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-bottom d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="fw-bold mb-0"><i class="bi bi-receipt-cutoff me-2"></i>Последние заказы</h6>
+                        <small class="text-muted"><i class="bi bi-broadcast me-1"></i>В реальном времени</small>
+                    </div>
+                    <a href="/orders" class="btn btn-sm btn-outline-warning">Все →</a>
+                </div>
+                @if (activeOrders.Count == 0)
+                {
+                    <div class="card-body d-flex flex-column align-items-center justify-content-center text-center py-5" style="min-height:280px;">
+                        <i class="bi bi-inbox text-muted" style="font-size:42px;"></i>
+                        <p class="text-muted mb-0 mt-2">Заказов пока нет</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>№</th>
+                                    <th>Стол</th>
+                                    <th>Тип</th>
+                                    <th class="text-end">Сумма</th>
+                                    <th class="text-end pe-3">Статус</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var o in activeOrders.Take(6))
+                                {
+                                    <tr>
+                                        <td class="fw-bold">#@o.OrderID</td>
+                                        <td>@o.TableID</td>
+                                        <td><small class="text-muted">@GetTypeLabel(o.Type) · @o.CreatedAt.ToLocalTime().ToString("HH:mm")</small></td>
+                                        <td class="text-end fw-semibold">@o.TotalPrice.ToString("N0") ₽</td>
+                                        <td class="text-end pe-3"><span class="badge @GetStatusClass(o.Status)">@GetStatusLabel(o.Status)</span></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="col-12 col-lg-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-bottom">
+                    <h6 class="fw-bold mb-0"><i class="bi bi-bar-chart-line me-2"></i>Сводка</h6>
+                </div>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span class="text-muted">Активных заказов</span>
+                        <strong>@activeOrders.Count</strong>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span class="text-muted">Сумма активных</span>
+                        <strong>@activeOrders.Sum(o => o.TotalPrice).ToString("N0") ₽</strong>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span class="text-muted">На кухне</span>
+                        <strong class="text-warning">@preparingCount</strong>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span class="text-muted">Готово</span>
+                        <strong class="text-success">@readyCount</strong>
+                    </li>
+                    @if (AuthService.GetCurrentRole() == 1 && shiftRevenue != null)
+                    {
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <span class="text-muted">Выручка за смену</span>
+                            <strong class="text-success">@shiftRevenue.TotalRevenue.ToString("N0") ₽</strong>
+                        </li>
+                    }
+                    @if (AuthService.GetCurrentRole() == 1 && lowStockCount > 0)
+                    {
+                        <a href="/inventory" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center text-decoration-none" style="color:#991b1b;">
+                            <span><i class="bi bi-exclamation-triangle me-2"></i>Низкие остатки</span>
+                            <strong>@lowStockCount →</strong>
+                        </a>
+                    }
+                </ul>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Order> activeOrders = new();
+    private ShiftRevenue? shiftRevenue;
+    private HallLoadReport? hallSummary;
+    private bool isLoading;
+    private int preparingCount;
+    private int readyCount;
+    private int lowStockCount;
+    private System.Timers.Timer? autoTimer;
+    private string liveNotification = "";
+
+    private string Greeting
+    {
+        get
+        {
+            var h = DateTime.Now.Hour;
+            return h < 6 ? "Доброй ночи" : h < 12 ? "Доброе утро" : h < 18 ? "Добрый день" : "Добрый вечер";
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthService.InitializeAsync();
+        if (!AuthService.IsAuthenticated()) { Nav.NavigateTo("/", forceLoad: true); return; }
+
+        HubService.OnOrderUpdated += OnHub;
+        HubService.OnWaiterNotification += OnWaiterNotification;
+        HubService.OnNewDelivery += OnNewDelivery;
+        await HubService.StartAsync();
+
+        var role = AuthService.GetCurrentRole();
+        if (role is 1 or 3) await HubService.JoinKitchenAsync();
+        if (role is 1 or 2) await HubService.JoinWaitersAsync();
+        if (role == 5) await HubService.JoinCouriersAsync();
+
+        await ReloadAll();
+
+        autoTimer = new System.Timers.Timer(15000);
+        autoTimer.Elapsed += async (_, _) => await InvokeAsync(ReloadAll);
+        autoTimer.Start();
+    }
+
+    private void OnHub() => InvokeAsync(ReloadAll);
+
+    private void OnWaiterNotification(string message) => ShowLiveNotification(message);
+    private void OnNewDelivery(object data) => ShowLiveNotification(KitchenHubService.GetDeliveryNotice(data));
+
+    private void ShowLiveNotification(string message)
+    {
+        liveNotification = message;
+        InvokeAsync(StateHasChanged);
+        _ = Task.Delay(7000).ContinueWith(_ => { liveNotification = ""; InvokeAsync(StateHasChanged); });
+    }
+
+    private async Task ReloadAll()
+    {
+        if (isLoading) return;
+        isLoading = true;
+        StateHasChanged();
+        try
+        {
+            if (AuthService.GetCurrentRole() is 1 or 2 or 3)
+                activeOrders = await Api.GetActiveOrdersAsync();
+            else
+                activeOrders.Clear();
+
+            preparingCount = activeOrders.Count(o => o.Status == "Preparing");
+            readyCount = activeOrders.Count(o => o.Status == "Ready");
+            if (AuthService.GetCurrentRole() == 1)
+            {
+                var stock = await Api.GetStockReportAsync();
+                lowStockCount = stock?.LowStockCount ?? 0;
+                shiftRevenue = await Api.GetShiftRevenueAsync();
+                hallSummary = await Api.GetHallLoadAsync();
+            }
+        }
+        catch { }
+        isLoading = false;
+        StateHasChanged();
+    }
+
+    private string GetStatusClass(string s) => s switch
+    {
+        "New" => "bg-primary",
+        "Preparing" => "bg-warning text-dark",
+        "Ready" => "bg-success",
+        "Paid" => "bg-secondary",
+        "Cancelled" => "bg-danger",
+        _ => "bg-secondary"
+    };
+
+    private string GetStatusLabel(string s) => s switch
+    {
+        "New" => "Новый",
+        "Preparing" => "На кухне",
+        "Ready" => "Готов",
+        "Paid" => "Оплачен",
+        "Cancelled" => "Отменён",
+        _ => s
+    };
+
+    private string GetTypeLabel(string t) => t switch
+    {
+        "DineIn" => "В зале",
+        "Delivery" => "Доставка",
+        "Takeaway" => "Самовывоз",
+        _ => t
+    };
+
+    public ValueTask DisposeAsync()
+    {
+        autoTimer?.Stop();
+        autoTimer?.Dispose();
+        HubService.OnOrderUpdated -= OnHub;
+        HubService.OnWaiterNotification -= OnWaiterNotification;
+        HubService.OnNewDelivery -= OnNewDelivery;
+        return ValueTask.CompletedTask;
+    }
+}

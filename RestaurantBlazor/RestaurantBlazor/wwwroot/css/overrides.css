@@ -1,0 +1,70 @@
+:root {
+    --rm-bg: #f6f1e9;
+    --rm-accent: #a94725;
+    --rm-accent-soft: #f5e5d7;
+    --rm-gold: #c78953;
+}
+
+body, main { background-color: var(--rm-bg); }
+.brand-mark { background: linear-gradient(145deg, #c76b35, #81351f) !important; box-shadow: 0 4px 14px rgba(169, 71, 37, .25) !important; }
+.btn-warning { background: #a94725 !important; border-color: #a94725 !important; }
+.btn-warning:hover { background: #81351f !important; border-color: #81351f !important; }
+.text-warning { color: #a94725 !important; background-color: transparent !important; }
+.bg-warning { color: #fff !important; background-color: #a94725 !important; }
+.border-warning { border-color: #a94725 !important; }
+main { min-width: 0; }
+
+.app-notice {
+    position: fixed;
+    z-index: 1080;
+    top: 76px;
+    right: 20px;
+    width: min(420px, calc(100vw - 32px));
+    margin: 0;
+    padding: 14px 48px 14px 16px;
+    border: 1px solid #e8ddd0;
+    border-left: 4px solid var(--rm-accent);
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(45, 33, 27, .18);
+    animation: notice-enter .18s ease-out;
+}
+
+.app-notice-close {
+    position: absolute;
+    top: 9px;
+    right: 9px;
+    width: 30px;
+    height: 30px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: inherit;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.app-notice-close:hover { background: rgba(0, 0, 0, .07); }
+
+@keyframes notice-enter {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 768px) {
+    .top-bar { gap: 10px; flex-wrap: wrap; }
+    .top-bar .user-info { gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+    .table-responsive { overscroll-behavior-x: contain; }
+    .modal-dialog { margin: .5rem; }
+    .modal-body { padding: 18px; }
+    .modal-footer { padding: 12px 18px; flex-wrap: wrap; }
+    .app-notice { top: 12px; right: 12px; }
+}
+
+@media (max-width: 420px) {
+    .content { padding: 16px 12px; }
+    .top-bar { padding: 10px 12px; }
+    .top-bar .brand-text { font-size: 13px; }
+    .top-bar .user-name { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .modal-dialog { margin: 0; min-height: 100%; display: flex; align-items: flex-end; }
+    .modal-content { width: 100%; border-radius: 16px 16px 0 0; }
+}

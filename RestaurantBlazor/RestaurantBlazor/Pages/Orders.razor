@@ -1,0 +1,375 @@
+@page "/orders"
+@layout MainLayout
+@implements IAsyncDisposable
+@using RestaurantBlazor.Services
+@using RestaurantBlazor.Models
+@inject ApiService Api
+@inject IAuthService AuthService
+@inject KitchenHubService HubService
+@inject NavigationManager Nav
+
+<PageTitle>Заказы</PageTitle>
+
+<style>
+    .order-status-menu{position:relative;display:inline-block}
+    .order-status-dropdown{display:block;position:absolute;right:0;top:100%;z-index:20;min-width:190px;margin-top:3px;box-shadow:0 8px 22px #0002}
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="fw-bold mb-1"><i class="bi bi-receipt-cutoff me-2"></i>Заказы</h2>
+        <div class="text-muted small">Управление заказами</div>
+    </div>
+    <button class="btn btn-warning" @onclick="ShowCreateModal">
+        <i class="bi bi-plus-lg me-1"></i>Новый заказ
+    </button>
+</div>
+
+@if (!string.IsNullOrEmpty(waiterNotification)) { <div class="alert alert-info app-notice" role="status"><i class="bi bi-bell me-2"></i>@waiterNotification<button class="app-notice-close" aria-label="Закрыть" @onclick="() => waiterNotification = string.Empty">×</button></div> }
+@if (!string.IsNullOrEmpty(errorMessage)) { <div class="alert alert-danger app-notice" role="alert"><i class="bi bi-exclamation-circle me-2"></i>@errorMessage<button class="app-notice-close" aria-label="Закрыть" @onclick="() => errorMessage = string.Empty">×</button></div> }
+@if (!string.IsNullOrEmpty(successMessage)) { <div class="alert alert-success app-notice" role="status"><i class="bi bi-check-circle me-2"></i>@successMessage<button class="app-notice-close" aria-label="Закрыть" @onclick="() => successMessage = string.Empty">×</button></div> }
+
+@if (pendingPayments.Any())
+{
+    <div class="card border-0 shadow-sm mb-3"><div class="card-header bg-white fw-bold">Запросы на подтверждение оплаты</div><div class="card-body py-2">
+        @foreach(var p in pendingPayments){<div class="d-flex justify-content-between align-items-center border-bottom py-2"><span>Заказ #@p.OrderID · @p.Amount.ToString("N2") ₽ · @(p.Method == "Cash" ? "наличные" : "карта у официанта")</span><button class="btn btn-sm btn-success" @onclick="() => ConfirmPayment(p.PaymentTransactionID)">Подтвердить оплату</button></div>}
+    </div></div>
+}
+
+<div class="card border-0 shadow-sm">
+    @if (isLoading)
+    {
+        <div class="card-body text-center py-5"><div class="spinner-border"></div></div>
+    }
+    else if (!orders.Any())
+    {
+        <div class="card-body text-center py-5">
+            <i class="bi bi-inbox text-muted" style="font-size:42px;"></i>
+            <p class="text-muted mb-0 mt-2">Заказов нет</p>
+        </div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">№</th>
+                        <th>Стол</th>
+                        <th>Тип</th>
+                        <th class="text-end">Сумма</th>
+                        <th>Статус</th>
+                        <th>Создан</th>
+                        <th class="text-end pe-3">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var order in orders)
+                    {
+                        <tr>
+                            <td class="ps-3 fw-bold">#@order.OrderID</td>
+                            <td>@order.TableID</td>
+                            <td>@GetTypeLabel(order.Type)</td>
+                            <td class="text-end fw-semibold">@order.TotalPrice.ToString("N0") ₽</td>
+                            <td><span class="badge @GetStatusClass(order.Status)">@GetStatusLabel(order.Status)</span></td>
+                            <td><small class="text-muted">@order.CreatedAt.ToLocalTime().ToString("dd.MM HH:mm")</small></td>
+                            <td class="text-end pe-3">
+                                <button class="btn btn-sm btn-outline-secondary me-1" @onclick="() => ViewOrder(order)" title="Просмотр">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                                @if (order.Status is not ("Paid" or "Cancelled"))
+                                {
+                                    <div class="order-status-menu">
+                                        <button class="btn btn-sm btn-outline-primary" @onclick="() => ToggleStatusMenu(order.OrderID)">Изменить статус <i class="bi bi-chevron-down ms-1"></i></button>
+                                        @if (openedStatusOrderId == order.OrderID)
+                                        {
+                                            <div class="dropdown-menu show order-status-dropdown">
+                                                @foreach (var choice in StatusChoices(order.Status))
+                                                {
+                                                    <button class="dropdown-item" @onclick="() => ChangeStatus(order.OrderID, choice.Value)" @onclick:stopPropagation="true">@choice.Label</button>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@if (showCreateModal)
+{
+    <div class="modal show d-block" tabindex="-1" style="background:rgba(0,0,0,.5);">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Новый заказ</h5>
+                    <button type="button" class="btn-close" @onclick="CloseModals"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small">Тип</label>
+                            <select class="form-select" value="@createForm.Type" @onchange="OnTypeChanged">
+                                <option value="DineIn">В зале</option>
+                                <option value="Delivery">Доставка</option>
+                                <option value="Takeaway">Самовывоз</option>
+                            </select>
+                        </div>
+                        @if (createForm.Type == "DineIn")
+                        {
+                            <div class="col-6">
+                                <label class="form-label small">Стол</label>
+                                <select data-choice="true" class="form-select" @bind="createForm.TableID">
+                                    <option value="0">— выбрать —</option>
+                                    @foreach (var t in tables)
+                                    {
+                                        <option value="@t.TableID">Стол @t.Number (мест: @t.Capacity)</option>
+                                    }
+                                </select>
+                            </div>
+                        }
+                    </div>
+
+                    @if (createForm.Type == "Delivery")
+                    {
+                        <div class="row g-2 mb-3"><div class="col-md-7"><label class="form-label small">Адрес доставки *</label><input data-kind="address" required minlength="8" maxlength="300" class="form-control" @bind="deliveryAddress" /></div><div class="col-md-5"><label class="form-label small">Телефон клиента *</label><RestaurantBlazor.Shared.PhoneInput @bind-Value="deliveryPhone" /></div></div>
+                    }
+
+                    <div class="form-check mb-3"><input class="form-check-input" type="checkbox" id="urgentOrder" checked="@(createForm.Priority == 1)" @onchange="e => createForm.Priority = e.Value is bool b && b ? 1 : 0" /><label class="form-check-label" for="urgentOrder">Высокий приоритет (аллергия / срочный заказ)</label></div>
+
+                    <h6 class="fw-bold mt-4 mb-3">Позиции:</h6>
+                    @foreach (var item in createForm.Items)
+                    {
+                        <div class="d-flex gap-2 mb-2">
+                            <select data-choice="true" class="form-select flex-grow-1" @bind="item.MenuItemID">
+                                <option value="0">— блюдо —</option>
+                                @foreach (var m in menuItems)
+                                {
+                                    <option value="@m.MenuItemID">@m.Name (@m.Price ₽)</option>
+                                }
+                            </select>
+                            <input required max="99" class="form-control" style="width:90px;" type="number" min="1" @bind="item.Quantity" />
+                            <button class="btn btn-outline-danger" style="width:46px;" @onclick="() => createForm.Items.Remove(item)">×</button>
+                        </div>
+                    }
+                    <button class="btn btn-outline-primary btn-sm mt-2" @onclick="AddItem">
+                        <i class="bi bi-plus-lg me-1"></i>Добавить блюдо
+                    </button>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseModals">Отмена</button>
+                    <button class="btn btn-warning" data-validate="true" @onclick="CreateOrder">Создать</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (showViewModal && selectedOrder != null)
+{
+    <div class="modal show d-block" tabindex="-1" style="background:rgba(0,0,0,.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Заказ #@selectedOrder.OrderID</h5>
+                    <button type="button" class="btn-close" @onclick="CloseModals"></button>
+                </div>
+                <div class="modal-body">
+                    <ul class="list-group list-group-flush mb-3">
+                        <li class="list-group-item d-flex justify-content-between"><span class="text-muted">Стол</span><strong>@selectedOrder.TableID</strong></li>
+                        <li class="list-group-item d-flex justify-content-between"><span class="text-muted">Тип</span><strong>@GetTypeLabel(selectedOrder.Type)</strong></li>
+                        <li class="list-group-item d-flex justify-content-between"><span class="text-muted">Сумма</span><strong>@selectedOrder.TotalPrice.ToString("N0") ₽</strong></li>
+                        <li class="list-group-item d-flex justify-content-between"><span class="text-muted">Статус</span><span class="badge @GetStatusClass(selectedOrder.Status)">@GetStatusLabel(selectedOrder.Status)</span></li>
+                    </ul>
+                    <h6 class="fw-bold mb-2">Позиции:</h6>
+                    <ul class="list-group">
+                        @foreach (var i in selectedOrder.Items)
+                        {
+                            <li class="list-group-item d-flex justify-content-between">
+                                <span>@(i.MenuItem?.Name ?? $"#{i.MenuItemID}")</span>
+                                <span>×@i.Quantity</span>
+                            </li>
+                        }
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private sealed record StatusChoice(string Value, string Label);
+    private List<Order> orders = new();
+    private List<RestaurantTable> tables = new();
+    private List<RestaurantBlazor.Models.MenuItem> menuItems = new();
+    private bool isLoading = true;
+    private bool showCreateModal;
+    private bool showViewModal;
+    private Order? selectedOrder;
+    private CreateOrderRequest createForm = new() { Items = new() };
+    private string errorMessage = "";
+    private string successMessage = "";
+    private string waiterNotification = "";
+    private List<PaymentRequestDto> pendingPayments = new();
+    private int? openedStatusOrderId;
+    private string deliveryAddress = "", deliveryPhone = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthService.InitializeAsync();
+        if (!AuthService.IsAuthenticated()) { Nav.NavigateTo("/", forceLoad: true); return; }
+        if (AuthService.GetCurrentRole() is not (1 or 2)) { Nav.NavigateTo("/home", forceLoad: true); return; }
+
+        HubService.OnOrderUpdated += OnOrderUpdated;
+        HubService.OnWaiterNotification += OnWaiterNotification;
+        await HubService.StartAsync();
+        await HubService.JoinWaitersAsync();
+        await LoadAll();
+    }
+
+    private async Task LoadAll()
+    {
+        var showInitialLoading = orders.Count == 0;
+        if (showInitialLoading) isLoading = true;
+        orders = await Api.GetActiveOrdersAsync();
+        tables = await Api.GetTablesAsync();
+        menuItems = await Api.GetMenuAsync();
+        pendingPayments = await Api.GetPendingPaymentsAsync();
+        isLoading = false;
+    }
+
+    private async Task ConfirmPayment(int id)
+    {
+        var result = await Api.ConfirmPaymentAsync(id);
+        if (result?.Status == true) { successMessage = result.Message; await LoadAll(); }
+        else errorMessage = result?.Message ?? "Не удалось подтвердить оплату";
+    }
+
+    private void OnOrderUpdated() => InvokeAsync(LoadAll);
+
+    private void OnWaiterNotification(string message)
+    {
+        waiterNotification = message;
+        InvokeAsync(StateHasChanged);
+        _ = Task.Delay(7000).ContinueWith(_ => { waiterNotification = ""; InvokeAsync(StateHasChanged); });
+    }
+
+    private void ShowCreateModal()
+    {
+        createForm = new() { Items = new() { new() { Quantity = 1 } } };
+        deliveryAddress = ""; deliveryPhone = "";
+        showCreateModal = true;
+    }
+
+    private void AddItem() => createForm.Items.Add(new() { Quantity = 1 });
+
+    private void OnTypeChanged(ChangeEventArgs e)
+    {
+        createForm.Type = e.Value?.ToString() ?? "DineIn";
+        if (createForm.Type != "DineIn") createForm.TableID = 0;
+    }
+
+    private async Task CreateOrder()
+    {
+        if (createForm.Type == "DineIn" && createForm.TableID <= 0)
+        { errorMessage = "Выберите стол"; AutoHideMessages(); return; }
+
+        if (createForm.Items == null || createForm.Items.Count == 0)
+        { errorMessage = "Добавьте хотя бы одно блюдо"; AutoHideMessages(); return; }
+
+        if (createForm.Items.Any(i => i.MenuItemID <= 0))
+        { errorMessage = "Выберите блюдо в каждой строке"; AutoHideMessages(); return; }
+
+        if (createForm.Items.Any(i => i.Quantity < 1))
+        { errorMessage = "Количество порций должно быть больше 0"; AutoHideMessages(); return; }
+
+        if (createForm.Type == "Delivery" && (string.IsNullOrWhiteSpace(deliveryAddress) || string.IsNullOrWhiteSpace(deliveryPhone)))
+        { errorMessage = "Для доставки укажите адрес и телефон клиента"; AutoHideMessages(); return; }
+
+        if (createForm.Type == "Delivery" && Ochag.Validation.InputRules.DeliveryError(deliveryAddress, deliveryPhone) is string inputError)
+        { errorMessage = inputError; return; }
+        createForm.WaiterID = AuthService.GetCurrentUserId();
+        var result = await Api.CreateOrderAsync(createForm);
+        if (result?.Status == true)
+        {
+            var deliveryError = "";
+            if (createForm.Type == "Delivery" && result.OrderId > 0)
+            {
+                var delivery = await Api.CreateDeliveryAsync(new CreateDeliveryRequest { OrderID = result.OrderId, Address = deliveryAddress.Trim(), ClientPhone = deliveryPhone.Trim() });
+                if (delivery?.Status != true) deliveryError = delivery?.Message ?? "Заказ создан, но доставку оформить не удалось";
+            }
+            if (string.IsNullOrEmpty(deliveryError)) successMessage = "Заказ создан";
+            else errorMessage = deliveryError;
+            CloseModals(); await LoadAll();
+        }
+        else errorMessage = result?.Message ?? "Ошибка";
+        AutoHideMessages();
+    }
+
+    private async Task ChangeStatus(int id, string status)
+    {
+        openedStatusOrderId = null;
+        var result = await Api.UpdateOrderStatusAsync(new() { OrderID = id, Status = status });
+        if (result?.Status == true) { successMessage = "Статус обновлён"; await LoadAll(); }
+        else errorMessage = result?.Message ?? "Ошибка";
+        AutoHideMessages();
+    }
+
+    private void ToggleStatusMenu(int id) => openedStatusOrderId = openedStatusOrderId == id ? null : id;
+    private static List<StatusChoice> StatusChoices(string current) => current switch
+    {
+        "New" => new() { new("Preparing", "На кухню"), new("Cancelled", "Отменить заказ") },
+        "Preparing" => new() { new("Ready", "Готов"), new("Cancelled", "Отменить заказ") },
+        "Ready" => new() { new("Cancelled", "Отменить заказ") },
+        _ => new()
+    };
+
+    private void ViewOrder(Order order) { selectedOrder = order; showViewModal = true; }
+
+    private void CloseModals()
+    {
+        showViewModal = false; showCreateModal = false; selectedOrder = null;
+    }
+
+    private void AutoHideMessages()
+    {
+        _ = Task.Delay(2500).ContinueWith(_ =>
+        {
+            errorMessage = ""; successMessage = "";
+            InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private string GetStatusClass(string s) => s switch
+    {
+        "New" => "bg-primary",
+        "Preparing" => "bg-warning text-dark",
+        "Ready" => "bg-success",
+        "Paid" => "bg-secondary",
+        "Cancelled" => "bg-danger",
+        _ => "bg-secondary"
+    };
+
+    private string GetStatusLabel(string s) => s switch
+    {
+        "New" => "Новый", "Preparing" => "На кухне", "Ready" => "Готов",
+        "Paid" => "Оплачен", "Cancelled" => "Отменён", _ => s
+    };
+
+    private string GetTypeLabel(string t) => t switch
+    {
+        "DineIn" => "В зале", "Delivery" => "Доставка", "Takeaway" => "Самовывоз", _ => t
+    };
+
+    public ValueTask DisposeAsync()
+    {
+        HubService.OnOrderUpdated -= OnOrderUpdated;
+        HubService.OnWaiterNotification -= OnWaiterNotification;
+        return ValueTask.CompletedTask;
+    }
+}

@@ -1,0 +1,177 @@
+@page "/kitchen"
+@layout MainLayout
+@implements IAsyncDisposable
+@using RestaurantBlazor.Services
+@using RestaurantBlazor.Models
+@inject ApiService Api
+@inject IAuthService AuthService
+@inject KitchenHubService HubService
+@inject NavigationManager Nav
+
+<PageTitle>Кухня</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="fw-bold mb-1"><i class="bi bi-fire me-2"></i>Кухонный экран</h2>
+    </div>
+    <button class="btn btn-outline-secondary btn-sm" @onclick="LoadOrders"><i class="bi bi-arrow-clockwise me-1"></i>Обновить</button>
+</div>
+<div class="d-flex align-items-center gap-2 mb-3"><label class="small text-muted">Станция</label><select  class="form-select form-select-sm" style="max-width:240px" @bind="selectedStation"><option>Все</option>@foreach (var station in stations){<option>@station</option>}</select></div>
+
+@if (!string.IsNullOrEmpty(statusMessage)) { <div class="alert alert-info app-notice" role="status"><i class="bi bi-info-circle me-2"></i>@statusMessage<button class="app-notice-close" aria-label="Закрыть" @onclick="() => statusMessage = string.Empty">×</button></div> }
+
+<div class="row g-3">
+    <div class="col-12 col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-white border-bottom d-flex justify-content-between align-items-center">
+                <h6 class="fw-bold mb-0 text-primary"><i class="bi bi-bell me-2"></i>Новые</h6>
+                <span class="badge bg-primary">@newOrders.Count</span>
+            </div>
+            <div class="card-body" style="max-height:70vh; overflow-y:auto;">
+                @if (!newOrders.Any())
+                {
+                    <p class="text-muted text-center py-4 mb-0"><i class="bi bi-inbox fs-3 d-block mb-2"></i>Нет новых</p>
+                }
+                @foreach (var order in newOrders)
+                {
+                    <div class="card border-0 shadow-sm mb-2 border-start border-4 border-primary">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <h6 class="fw-bold mb-0">#@order.OrderID · @(order.TableID.HasValue ? $"Стол {order.TableID}" : OrderTypeLabel(order.Type))</h6>
+                                <small class="text-muted">@order.CreatedAt.ToLocalTime().ToString("HH:mm")</small>
+                            </div>
+                            @if (order.Priority == 1) { <span class="badge bg-danger mb-2">Высокий приоритет</span> }
+                            <ul class="mb-2 mt-2 small">
+                                @foreach (var item in order.Items)
+                                {
+                                    <li>@(item.MenuItem?.Name ?? $"#{item.MenuItemID}") × @item.Quantity <span class="text-muted">· @(item.MenuItem?.KitchenStation ?? "Общая кухня")</span></li>
+                                }
+                            </ul>
+                            <button class="btn btn-warning btn-sm w-100" @onclick='() => ChangeStatus(order.OrderID, "Preparing")'>
+                                <i class="bi bi-play-fill me-1"></i>Взять в работу
+                            </button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-white border-bottom d-flex justify-content-between align-items-center">
+                <h6 class="fw-bold mb-0 text-warning"><i class="bi bi-fire me-2"></i>В работе</h6>
+                <span class="badge bg-warning text-dark">@preparingOrders.Count</span>
+            </div>
+            <div class="card-body" style="max-height:70vh; overflow-y:auto;">
+                @if (!preparingOrders.Any())
+                {
+                    <p class="text-muted text-center py-4 mb-0"><i class="bi bi-pause-circle fs-3 d-block mb-2"></i>Ничего не готовится</p>
+                }
+                @foreach (var order in preparingOrders)
+                {
+                    <div class="card border-0 shadow-sm mb-2 border-start border-4 border-warning">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <h6 class="fw-bold mb-0">#@order.OrderID · @(order.TableID.HasValue ? $"Стол {order.TableID}" : OrderTypeLabel(order.Type))</h6>
+                                <small class="text-muted">@order.CreatedAt.ToLocalTime().ToString("HH:mm")</small>
+                            </div>
+                            @if (order.Priority == 1) { <span class="badge bg-danger mb-2">Высокий приоритет</span> }
+                            <ul class="mb-2 mt-2 small">
+                                @foreach (var item in order.Items)
+                                {
+                                    <li>@(item.MenuItem?.Name ?? $"#{item.MenuItemID}") × @item.Quantity <span class="text-muted">· @(item.MenuItem?.KitchenStation ?? "Общая кухня")</span></li>
+                                }
+                            </ul>
+                            <button class="btn btn-success btn-sm w-100" @onclick='() => ChangeStatus(order.OrderID, "Ready")'>
+                                <i class="bi bi-check-lg me-1"></i>Готово
+                            </button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-white border-bottom d-flex justify-content-between align-items-center">
+                <h6 class="fw-bold mb-0 text-success"><i class="bi bi-check-circle me-2"></i>Готовы</h6>
+                <span class="badge bg-success">@readyOrders.Count</span>
+            </div>
+            <div class="card-body" style="max-height:70vh; overflow-y:auto;">
+                @if (!readyOrders.Any())
+                {
+                    <p class="text-muted text-center py-4 mb-0"><i class="bi bi-tray fs-3 d-block mb-2"></i>Нет готовых</p>
+                }
+                @foreach (var order in readyOrders)
+                {
+                    <div class="card border-0 shadow-sm mb-2 border-start border-4 border-success">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <h6 class="fw-bold mb-0">#@order.OrderID · @(order.TableID.HasValue ? $"Стол {order.TableID}" : OrderTypeLabel(order.Type))</h6>
+                                <small class="text-muted">@order.CreatedAt.ToLocalTime().ToString("HH:mm")</small>
+                            </div>
+                            @if (order.Priority == 1) { <span class="badge bg-danger mb-2">Высокий приоритет</span> }
+                            <ul class="mb-0 mt-2 small">
+                                @foreach (var item in order.Items)
+                                {
+                                    <li>@(item.MenuItem?.Name ?? $"#{item.MenuItemID}") × @item.Quantity <span class="text-muted">· @(item.MenuItem?.KitchenStation ?? "Общая кухня")</span></li>
+                                }
+                            </ul>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<Order> allOrders = new();
+    private string selectedStation = "Все";
+    private static string OrderTypeLabel(string type) => type switch { "DineIn" => "В зале", "Delivery" => "Доставка", "Takeaway" => "Самовывоз", _ => "Заказ" };
+    private List<string> stations => allOrders.SelectMany(o => o.Items).Select(i => i.MenuItem?.KitchenStation ?? "Общая кухня").Distinct().OrderBy(s => s).ToList();
+    private IEnumerable<Order> FilterStation(IEnumerable<Order> rows) => rows.Where(o => selectedStation == "Все" || o.Items.Any(i => (i.MenuItem?.KitchenStation ?? "Общая кухня") == selectedStation)).OrderByDescending(o => o.Priority).ThenBy(o => o.CreatedAt);
+    private List<Order> newOrders => FilterStation(allOrders.Where(o => o.Status == "New")).ToList();
+    private List<Order> preparingOrders => FilterStation(allOrders.Where(o => o.Status == "Preparing")).ToList();
+    private List<Order> readyOrders => FilterStation(allOrders.Where(o => o.Status == "Ready")).ToList();
+    private string statusMessage = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthService.InitializeAsync();
+        if (!AuthService.IsAuthenticated()) { Nav.NavigateTo("/", forceLoad: true); return; }
+        if (AuthService.GetCurrentRole() is not (1 or 3)) { Nav.NavigateTo("/home", forceLoad: true); return; }
+
+        HubService.OnOrderUpdated += OnHub;
+        await HubService.StartAsync();
+        await HubService.JoinKitchenAsync();
+        await LoadOrders();
+    }
+
+    private void OnHub() => InvokeAsync(LoadOrders);
+
+    private async Task LoadOrders()
+    {
+        allOrders = await Api.GetActiveOrdersAsync();
+        StateHasChanged();
+    }
+
+    private async Task ChangeStatus(int orderId, string status)
+    {
+        var result = await Api.UpdateOrderStatusAsync(new() { OrderID = orderId, Status = status });
+        if (result?.Status == true)
+        {
+            statusMessage = status == "Preparing" ? $"Заказ #{orderId} взят в работу" : $"Заказ #{orderId} готов!";
+            await LoadOrders();
+        }
+        _ = Task.Delay(2500).ContinueWith(_ => { statusMessage = ""; InvokeAsync(StateHasChanged); });
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        HubService.OnOrderUpdated -= OnHub;
+        return ValueTask.CompletedTask;
+    }
+}

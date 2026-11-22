@@ -1,0 +1,16 @@
+@using Ochag.Validation
+<input type="tel" class="@Class" inputmode="numeric" autocomplete="tel" maxlength="11"
+       pattern="[78][0-9]{10}" placeholder="79991234567" aria-label="Телефон: 11 цифр, начиная с 7 или 8"
+       value="@Value" @oninput="Update" data-phone="true" required />
+<small class="field-hint">11 цифр, начиная с 7 или 8</small>
+
+@code {
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string Class { get; set; } = "form-control";
+    private async Task Update(ChangeEventArgs e)
+    {
+        Value = InputRules.Digits(e.Value?.ToString());
+        await ValueChanged.InvokeAsync(Value);
+    }
+}

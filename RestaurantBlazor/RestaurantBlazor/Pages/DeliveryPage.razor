@@ -1,0 +1,412 @@
+@page "/delivery"
+@layout MainLayout
+@implements IAsyncDisposable
+@using RestaurantBlazor.Services
+@using RestaurantBlazor.Models
+@inject ApiService Api
+@inject IAuthService AuthService
+@inject KitchenHubService HubService
+@inject NavigationManager Nav
+
+<PageTitle>Доставки</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="fw-bold mb-1"><i class="bi bi-truck me-2"></i>Доставки</h2>
+        <div class="text-muted small">Заказы на дом</div>
+    </div>
+    @if (AuthService.GetCurrentRole() == 1)
+    {
+        <button class="btn btn-warning" @onclick="ShowCreateModalAsync">
+            <i class="bi bi-plus-lg me-1"></i>Новая доставка
+        </button>
+    }
+</div>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger app-notice" role="alert"><i class="bi bi-exclamation-circle me-2"></i>@errorMessage<button class="app-notice-close" aria-label="Закрыть" @onclick="() => errorMessage = string.Empty">×</button></div>
+}
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="alert alert-success app-notice" role="status"><i class="bi bi-check-circle me-2"></i>@successMessage<button class="app-notice-close" aria-label="Закрыть" @onclick="() => successMessage = string.Empty">×</button></div>
+}
+
+<div class="card border-0 shadow-sm mb-4"><div class="card-header bg-white d-flex justify-content-between align-items-center"><strong><i class="bi bi-signpost-split me-2"></i>Маршрут курьера</strong><button class="btn btn-sm btn-warning" @onclick="SaveRoute" disabled="@(!routeDeliveries.Any())">Сохранить порядок</button></div><div class="card-body">
+    @if (!routeDeliveries.Any()) { <div class="text-muted small">Нет активных доставок для маршрута</div> }
+    @for (var i = 0; i < routeDeliveries.Count; i++)
+    {
+        var stop = routeDeliveries[i]; var index = i;
+        <div class="d-flex align-items-center gap-2 border-bottom py-2"><span class="badge bg-dark">@(i + 1)</span><span class="flex-grow-1">@stop.Address · @stop.ClientPhone (@GetStatusLabel(stop.Status))</span><button class="btn btn-sm btn-outline-secondary" disabled="@(i == 0)" @onclick="() => MoveRoute(index, -1)">↑</button><button class="btn btn-sm btn-outline-secondary" disabled="@(i == routeDeliveries.Count - 1)" @onclick="() => MoveRoute(index, 1)">↓</button></div>
+    }
+    @if (!string.IsNullOrEmpty(routeMessage)) { <div class="small text-success mt-2">@routeMessage</div> }
+</div></div>
+
+<!-- Уведомление клиенту (для курьера — показываем последнее сообщение) -->
+@if (!string.IsNullOrEmpty(clientNotification))
+{
+    <div class="alert alert-info app-notice" role="status">
+        <i class="bi bi-bell me-2"></i>@clientNotification<button class="app-notice-close" aria-label="Закрыть" @onclick="() => clientNotification = string.Empty">×</button>
+    </div>
+}
+
+<div class="card border-0 shadow-sm">
+    @if (isLoading)
+    {
+        <div class="card-body text-center py-5"><div class="spinner-border"></div></div>
+    }
+    else if (!deliveries.Any())
+    {
+        <div class="card-body text-center py-5">
+            <i class="bi bi-truck text-muted" style="font-size:42px;"></i>
+            <p class="text-muted mb-0 mt-2">Доставок нет</p>
+        </div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">№</th>
+                        <th>Заказ</th>
+                        <th>Откуда / куда</th>
+                        <th>Телефон</th>
+                        <th>Курьер</th>
+                        <th>Статус</th>
+                        <th>Прибытие</th>
+                        <th>Создано</th>
+                        <th class="text-end pe-3">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var d in deliveries)
+                    {
+                        <tr>
+                            <td class="ps-3 fw-bold">#@d.DeliveryID</td>
+                            <td>#@d.OrderID</td>
+                            <td>
+                                <div><span class="text-muted small">Забрать:</span> <a href="@MapUrl(d.Order?.PickupAddress)" target="_blank" rel="noopener noreferrer">@(string.IsNullOrWhiteSpace(d.Order?.PickupAddress) ? "Филиал не указан" : d.Order.PickupAddress)</a>@if (AuthService.GetCurrentRole() == 5 && !string.IsNullOrWhiteSpace(d.Order?.PickupAddress)) { <span> · </span><a href="@DirectionsUrl(d.Order.PickupAddress)" target="_blank" rel="noopener noreferrer">пеший маршрут</a> }</div>
+                                <div><span class="text-muted small">Доставить:</span> <a href="@MapUrl(d.Address)" target="_blank" rel="noopener noreferrer">@d.Address</a></div>
+                            </td>
+                            <td>@d.ClientPhone</td>
+                            <td>@(d.Courier?.UserName ?? "—")</td>
+                            <td><span class="badge @GetStatusClass(d.Status)">@GetStatusLabel(d.Status)</span></td>
+                            <td>
+                                @if (d.EstimatedArrival.HasValue && d.Status != "Delivered")
+                                {
+                                    <small class="text-info fw-semibold">@d.EstimatedArrival.Value.ToLocalTime().ToString("HH:mm")</small>
+                                }
+                                else
+                                {
+
+                                    <span class="text-muted">—</span>
+                                }
+                            </td>
+                            <td><small class="text-muted">@d.CreatedAt.ToLocalTime().ToString("dd.MM HH:mm")</small></td>
+                            <td class="text-end pe-3">
+                                @if (AuthService.GetCurrentRole() == 1 && d.CourierID == null)
+                                {
+                                    <button class="btn btn-sm btn-outline-primary" @onclick="() => ShowAssignModalAsync(d)">Назначить</button>
+                                }
+                                @if (AuthService.GetCurrentRole() == 5 && d.Status == "Pending" && d.CourierID == null)
+                                {
+                                    <button class="btn btn-sm btn-info" @onclick='() => UpdateStatus(d.DeliveryID, "Accepted", null)'>Принять заказ</button>
+                                }
+                                @if (AuthService.GetCurrentRole() == 5 && d.Status == "Assigned")
+                                {
+                                    <button class="btn btn-sm btn-info" @onclick='() => UpdateStatus(d.DeliveryID, "Accepted", null)'>Принять</button>
+                                }
+                                @if (AuthService.GetCurrentRole() == 5 && d.Status == "Accepted")
+                                {
+                                    <button class="btn btn-sm btn-warning" @onclick="() => ShowInTransitModal(d)">Выехал</button>
+                                }
+                                @if (AuthService.GetCurrentRole() == 5 && d.Status == "InTransit")
+                                {
+                                    <button class="btn btn-sm btn-success" @onclick='() => UpdateStatus(d.DeliveryID, "Delivered", null)'>Доставлен</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+<!-- Модал: новая доставка -->
+@if (showCreateModal)
+{
+    <div class="modal show d-block" tabindex="-1" style="background:rgba(0,0,0,.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Новая доставка</h5>
+                    <button class="btn-close" @onclick="CloseModals"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small">Заказ *</label>
+                        <select data-choice="true" class="form-select" @bind="createForm.OrderID">
+                            <option value="0">— выбрать —</option>
+                            @foreach (var o in availableOrders)
+                            {
+                                <option value="@o.OrderID">#@o.OrderID — @o.TotalPrice.ToString("N0") ₽ (@o.Type)</option>
+                            }
+                        </select>
+                        @if (!availableOrders.Any())
+                        {
+                            <small class="text-muted d-block">Список содержит активные заказы типа «Доставка», для которых ещё не оформлена доставка.</small>
+                            <small class="text-muted d-block">Если список пуст, создайте заказ с типом «Доставка» в разделе «Заказы».</small>
+                        }
+                    </div>
+                    <div class="mb-3"><label class="form-label small">Адрес *</label><input data-kind="address" required minlength="8" maxlength="300" class="form-control" @bind="createForm.Address" /></div>
+                    <div class="mb-3"><label class="form-label small">Телефон *</label><RestaurantBlazor.Shared.PhoneInput @bind-Value="createForm.ClientPhone" /></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseModals">Отмена</button>
+                    <button class="btn btn-warning" data-validate="true" @onclick="CreateDelivery">Создать</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Модал: назначить курьера -->
+@if (showAssignModal && assignTarget != null)
+{
+    <div class="modal show d-block" tabindex="-1" style="background:rgba(0,0,0,.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Назначить курьера</h5>
+                    <button class="btn-close" @onclick="CloseModals"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small">Доставка <strong>#@assignTarget.DeliveryID</strong> на адрес <strong>@assignTarget.Address</strong></p>
+                    <p class="small text-info"><i class="bi bi-clock me-1"></i>Расчётное время прибытия будет автоматически установлено на +30 минут от момента назначения</p>
+                    <label class="form-label small">Курьер</label>
+                    <select  class="form-select" @bind="assignCourierId">
+                        <option value="0">— выбрать —</option>
+                        @foreach (var c in couriers)
+                        {
+                            <option value="@c.UserID">@c.UserName</option>
+                        }
+                    </select>
+                    @if (!couriers.Any())
+                    {
+                        <small class="text-muted d-block mt-2">Нет зарегистрированных курьеров</small>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseModals">Отмена</button>
+                    <button class="btn btn-warning" data-validate="true" @onclick="AssignCourier">Назначить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Модал: курьер выехал (маршрутизация — указать время прибытия) -->
+@if (showInTransitModal && inTransitTarget != null)
+{
+    <div class="modal show d-block" tabindex="-1" style="background:rgba(0,0,0,.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Маршрутизация доставки</h5>
+                    <button class="btn-close" @onclick="CloseModals"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small">Доставка <strong>#@inTransitTarget.DeliveryID</strong></p>
+                    <p class="small"><i class="bi bi-geo-alt me-1 text-danger"></i><strong>Адрес:</strong> @inTransitTarget.Address</p>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Сколько минут до прибытия? *</label>
+                        <div class="input-group">
+                            <input required class="form-control" type="number" min="1" max="180" @bind="estimatedMinutes" placeholder="Например: 20" />
+                            <span class="input-group-text">мин</span>
+                        </div>
+                        <small class="text-muted">Клиент получит уведомление с расчётным временем прибытия</small>
+                    </div>
+                    @if (estimatedMinutes > 0)
+                    {
+                        <div class="alert alert-info py-2">
+                            <i class="bi bi-clock me-1"></i>Клиент будет уведомлён: ожидайте к <strong>@DateTime.Now.AddMinutes(estimatedMinutes).ToString("HH:mm")</strong>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseModals">Отмена</button>
+                    <button class="btn btn-warning" data-validate="true" @onclick="ConfirmInTransit" disabled="@(estimatedMinutes is < 1 or > 180)">Выехал — уведомить клиента</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Models.Delivery> deliveries = new();
+    private List<Models.Delivery> routeDeliveries = new();
+    private string routeMessage = "";
+    private List<Order> availableOrders = new();
+    private List<UserMini> couriers = new();
+    private bool isLoading = true;
+    private bool showCreateModal, showAssignModal, showInTransitModal;
+    private Models.Delivery? assignTarget, inTransitTarget;
+    private int assignCourierId, estimatedMinutes;
+    private CreateDeliveryRequest createForm = new();
+    private static string MapUrl(string? address) => string.IsNullOrWhiteSpace(address) ? "#" : $"https://www.google.com/maps/search/?api=1&query={Uri.EscapeDataString(address)}";
+    private static string DirectionsUrl(string address) => $"https://www.google.com/maps/dir/?api=1&destination={Uri.EscapeDataString(address)}&travelmode=walking";
+    private string errorMessage = "", successMessage = "", clientNotification = "";
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthService.InitializeAsync();
+        if (!AuthService.IsAuthenticated()) { Nav.NavigateTo("/", forceLoad: true); return; }
+        if (AuthService.GetCurrentRole() is not (1 or 5)) { Nav.NavigateTo("/home", forceLoad: true); return; }
+
+        HubService.OnDeliveryStatusChanged += OnDeliveryStatusChanged;
+        HubService.OnNewDelivery += OnNewDelivery;
+        await HubService.StartAsync();
+        if (AuthService.GetCurrentRole() == 5)
+            await HubService.JoinCouriersAsync();
+        await Load();
+    }
+
+    private void OnDeliveryStatusChanged(string message)
+    {
+        clientNotification = message;
+        InvokeAsync(async () => { StateHasChanged(); await Load(); });
+        _ = Task.Delay(8000).ContinueWith(_ => { clientNotification = ""; InvokeAsync(StateHasChanged); });
+    }
+
+    private void OnNewDelivery(object _)
+    {
+        successMessage = KitchenHubService.GetDeliveryNotice(_);
+        InvokeAsync(Load);
+        AutoHide();
+    }
+
+    private async Task Load()
+    {
+        isLoading = true;
+        deliveries = await Api.GetDeliveriesAsync();
+        routeDeliveries = await Api.GetRoutePlanAsync();
+
+        if (AuthService.GetCurrentRole() == 1)
+        {
+            availableOrders = await Api.GetDeliveryEligibleOrdersAsync();
+        }
+        else
+        {
+            availableOrders.Clear();
+        }
+
+        couriers = AuthService.GetCurrentRole() == 1 ? await Api.GetCouriersAsync() : new();
+        isLoading = false;
+    }
+
+    private void MoveRoute(int index, int delta)
+    {
+        var next = index + delta;
+        if (next < 0 || next >= routeDeliveries.Count) return;
+        (routeDeliveries[index], routeDeliveries[next]) = (routeDeliveries[next], routeDeliveries[index]);
+    }
+
+    private async Task SaveRoute()
+    {
+        var result = await Api.SaveRoutePlanAsync(routeDeliveries.Select(d => d.DeliveryID).ToList());
+        routeMessage = result?.Message ?? (result?.Status == true ? "Маршрут сохранён" : "Не удалось сохранить маршрут");
+        if (result?.Status == true) await Load();
+    }
+
+    private async Task ShowCreateModalAsync()
+    {
+        createForm = new(); await Load(); showCreateModal = true;
+    }
+
+    private async Task ShowAssignModalAsync(Models.Delivery d)
+    {
+        assignTarget = d; assignCourierId = 0;
+        if (!couriers.Any()) couriers = await Api.GetCouriersAsync();
+        showAssignModal = true;
+    }
+
+    private void ShowInTransitModal(Models.Delivery d)
+    {
+        inTransitTarget = d; estimatedMinutes = 0; showInTransitModal = true;
+    }
+
+    private void CloseModals()
+    {
+        showCreateModal = false; showAssignModal = false; showInTransitModal = false;
+        assignTarget = null; inTransitTarget = null;
+    }
+
+    private async Task CreateDelivery()
+    {
+        if (createForm.OrderID <= 0 || string.IsNullOrWhiteSpace(createForm.Address) || string.IsNullOrWhiteSpace(createForm.ClientPhone))
+        { errorMessage = "Заполните все поля"; AutoHide(); return; }
+        var r = await Api.CreateDeliveryAsync(createForm);
+        if (r?.Status == true) { successMessage = "Доставка создана"; CloseModals(); await Load(); }
+        else errorMessage = r?.Message ?? "Ошибка";
+        AutoHide();
+    }
+
+    private async Task AssignCourier()
+    {
+        if (assignCourierId <= 0 || assignTarget == null) { errorMessage = "Выберите курьера"; AutoHide(); return; }
+        var r = await Api.AssignCourierAsync(new() { DeliveryID = assignTarget.DeliveryID, CourierID = assignCourierId });
+        if (r?.Status == true) { successMessage = "Курьер назначен, клиент уведомлён"; CloseModals(); await Load(); }
+        else errorMessage = r?.Message ?? "Ошибка";
+        AutoHide();
+    }
+
+    private async Task ConfirmInTransit()
+    {
+        if (inTransitTarget == null || estimatedMinutes is < 1 or > 180) return;
+        await UpdateStatus(inTransitTarget.DeliveryID, "InTransit", estimatedMinutes);
+        CloseModals();
+    }
+
+    private async Task UpdateStatus(int id, string status, int? minutes)
+    {
+        var r = await Api.UpdateDeliveryStatusAsync(new() { DeliveryID = id, Status = status, EstimatedMinutes = minutes });
+        if (r?.Status == true) { successMessage = "Статус обновлён"; await Load(); }
+        else errorMessage = r?.Message ?? "Ошибка";
+        AutoHide();
+    }
+
+    private void AutoHide()
+    {
+        _ = Task.Delay(2500).ContinueWith(_ => { errorMessage = ""; successMessage = ""; InvokeAsync(StateHasChanged); });
+    }
+
+    private string GetStatusClass(string s) => s switch
+    {
+        "Pending" => "bg-secondary",
+        "Assigned" => "bg-primary",
+        "Accepted" => "bg-info",
+        "InTransit" => "bg-warning text-dark",
+        "Delivered" => "bg-success",
+        "Cancelled" => "bg-danger",
+        _ => "bg-secondary"
+    };
+
+    private string GetStatusLabel(string s) => s switch
+    {
+        "Pending" => "Ожидает",
+        "Assigned" => "Назначен курьер",
+        "Accepted" => "Курьер принял",
+        "InTransit" => "Курьер едет",
+        "Delivered" => "Доставлен",
+        "Cancelled" => "Отменён",
+        _ => s
+    };
+
+    public ValueTask DisposeAsync()
+    {
+        HubService.OnDeliveryStatusChanged -= OnDeliveryStatusChanged;
+        HubService.OnNewDelivery -= OnNewDelivery;
+        return ValueTask.CompletedTask;
+    }
+}

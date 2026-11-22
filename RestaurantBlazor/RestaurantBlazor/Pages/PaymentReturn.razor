@@ -1,0 +1,71 @@
+@page "/payment-return"
+@layout MainLayout
+@using RestaurantBlazor.Models
+@using RestaurantBlazor.Services
+@inject ApiService Api
+@inject IAuthService Auth
+@inject NavigationManager Nav
+
+<PageTitle>Проверка оплаты</PageTitle>
+
+<div class="container py-5" style="max-width:680px">
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center p-5">
+            <i class="bi bi-credit-card-2-front text-primary" style="font-size:48px"></i>
+            <h2 class="fw-bold mt-3">Проверка оплаты</h2>
+            @if (isChecking)
+            {
+                <div class="spinner-border text-primary my-3" role="status"></div>
+            }
+            <p class="text-muted">@message</p>
+            @if (!isChecking && paymentID > 0 && paymentStatus is not ("succeeded" or "canceled"))
+            {
+                <button class="btn btn-outline-primary" @onclick="CheckPayment">Проверить ещё раз</button>
+            }
+            <div class="mt-4"><button class="btn btn-warning" @onclick='() => Nav.NavigateTo("/guest-home")'>В личный кабинет</button></div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "paymentID")]
+    public int paymentID { get; set; }
+
+    private bool isChecking;
+    private string paymentStatus = "";
+    private string message = "Подождите, проверяем статус транзакции в ЮKassa.";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Auth.InitializeAsync();
+        if (!Auth.IsAuthenticated())
+        {
+            message = "Войдите в систему, чтобы проверить статус заказа.";
+            return;
+        }
+
+        if (paymentID <= 0)
+        {
+            message = "Не найден номер платежа в адресе возврата.";
+            return;
+        }
+
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            await CheckPayment();
+            if (paymentStatus is "succeeded" or "canceled" or "needs_review" || !string.IsNullOrWhiteSpace(paymentStatus) && !message.Contains("ожидаем", StringComparison.OrdinalIgnoreCase))
+                break;
+            if (attempt < 4) await Task.Delay(2000);
+        }
+    }
+
+    private async Task CheckPayment()
+    {
+        if (paymentID <= 0 || isChecking) return;
+        isChecking = true;
+        var response = await Api.GetOnlinePaymentStatusAsync(paymentID);
+        paymentStatus = response.PaymentStatus;
+        message = response.Message;
+        isChecking = false;
+    }
+}

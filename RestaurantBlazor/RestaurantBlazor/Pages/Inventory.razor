@@ -1,0 +1,432 @@
+@page "/inventory"
+@layout MainLayout
+@using RestaurantBlazor.Services
+@using RestaurantBlazor.Models
+@inject ApiService Api
+@inject IAuthService AuthService
+@inject NavigationManager Nav
+
+<PageTitle>Склад</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="fw-bold mb-1"><i class="bi bi-box-seam me-2"></i>Склад</h2>
+        <div class="text-muted small">Учёт ингредиентов и техкарты</div>
+    </div>
+    <div class="d-flex gap-2">
+        <button class="btn @(activeTab == "ingredients" ? "btn-warning" : "btn-outline-secondary")" @onclick='() => activeTab = "ingredients"'>
+            <i class="bi bi-list-ul me-1"></i>Ингредиенты
+        </button>
+        <button class="btn @(activeTab == "techcards" ? "btn-warning" : "btn-outline-secondary")" @onclick='() => SwitchToTechCards()'>
+            <i class="bi bi-card-checklist me-1"></i>Техкарты
+        </button>
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger app-notice" role="alert"><i class="bi bi-exclamation-circle me-2"></i>@errorMessage<button class="app-notice-close" aria-label="Закрыть" @onclick="() => errorMessage = string.Empty">×</button></div>
+}
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="alert alert-success app-notice" role="status"><i class="bi bi-check-circle me-2"></i>@successMessage<button class="app-notice-close" aria-label="Закрыть" @onclick="() => successMessage = string.Empty">×</button></div>
+}
+
+<!-- ============ ИНГРЕДИЕНТЫ ============ -->
+@if (activeTab == "ingredients")
+{
+    <div class="d-flex gap-2 mb-3">
+        <button class="btn btn-warning" @onclick="() => showCreateIng = true">
+            <i class="bi bi-plus-lg me-1"></i>Ингредиент
+        </button>
+        <button class="btn btn-outline-success" @onclick="() => showStock = true">
+            <i class="bi bi-arrow-up me-1"></i>Поступление
+        </button>
+    </div>
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white border-bottom">
+            <h6 class="fw-bold mb-0"><i class="bi bi-list-ul me-2"></i>Ингредиенты</h6>
+        </div>
+        @if (!ingredients.Any())
+        {
+            <div class="card-body text-center py-5">
+                <i class="bi bi-box text-muted" style="font-size:42px;"></i>
+                <p class="text-muted mb-0 mt-2">Нет ингредиентов</p>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th class="ps-3">Название</th>
+                            <th class="text-end">Остаток</th>
+                            <th>Ед.</th>
+                            <th class="text-end">Цена/ед.</th>
+                            <th class="text-end pe-3">Статус</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var i in ingredients)
+                        {
+                            <tr>
+                                <td class="ps-3 fw-semibold">@i.Name</td>
+                                <td class="text-end"><strong class="@(i.Stock < 10 ? "text-danger" : "")">@i.Stock</strong></td>
+                                <td>@UnitLabel(i.Unit)</td>
+                                <td class="text-end text-muted">@(i.PricePerUnit > 0 ? i.PricePerUnit.ToString("N2") + " ₽" : "—")</td>
+                                <td class="text-end pe-3">
+                                    @if (i.Stock < 10)
+                                    {
+                                        <span class="badge bg-danger">Мало</span>
+                                    }
+                                    else
+                                    {
+
+                                        <span class="badge bg-success">OK</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+}
+
+<!-- ============ ТЕХКАРТЫ ============ -->
+@if (activeTab == "techcards")
+{
+    <div class="d-flex gap-2 mb-3">
+        <button class="btn btn-warning" @onclick="() => showCreateTC = true">
+            <i class="bi bi-plus-lg me-1"></i>Добавить техкарту
+        </button>
+    </div>
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white border-bottom">
+            <h6 class="fw-bold mb-0"><i class="bi bi-card-checklist me-2"></i>Техкарты (состав блюд)</h6>
+        </div>
+        @if (!techCards.Any())
+        {
+            <div class="card-body text-center py-5">
+                <i class="bi bi-file-earmark-text text-muted" style="font-size:42px;"></i>
+                <p class="text-muted mb-0 mt-2">Техкарты не добавлены</p>
+            </div>
+        }
+        else
+        {
+            @foreach (var group in techCards.GroupBy(tc => tc.MenuItem?.Name ?? $"Блюдо #{tc.MenuItemID}"))
+            {
+                <div class="card-body border-bottom pb-2">
+                    <h6 class="fw-bold mb-2"><i class="bi bi-egg-fried me-2 text-warning"></i>@group.Key</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Ингредиент</th>
+                                    <th class="text-end">Количество</th>
+                                    <th>Ед.</th>
+                                    <th class="text-end">Стоимость</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var tc in group)
+                                {
+                                    <tr>
+                                        <td>@(tc.Ingredient?.Name ?? $"#{tc.IngredientID}")</td>
+                                        <td class="text-end">@tc.Quantity</td>
+                                        <td>@(tc.Ingredient is null ? "" : UnitLabel(tc.Ingredient.Unit))</td>
+                                        <td class="text-end text-muted">
+                                            @(tc.Ingredient?.PricePerUnit > 0 ? (tc.Quantity * tc.Ingredient.PricePerUnit).ToString("N2") + " ₽" : "—")
+                                        </td>
+                                    </tr>
+                                }
+                                @{
+                                    var total = group.Sum(tc => tc.Ingredient?.PricePerUnit > 0 ? tc.Quantity * tc.Ingredient.PricePerUnit : 0);
+                                }
+                                @if (total > 0)
+                                {
+                                    <tr class="table-light">
+                                        <td colspan="3" class="text-end fw-bold">Себестоимость:</td>
+                                        <td class="text-end fw-bold text-danger">@total.ToString("N2") ₽</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+        }
+    </div>
+}
+
+<!-- Модал: новый ингредиент -->
+@if (showCreateIng)
+{
+    <div class="modal show d-block" tabindex="-1" style="background:rgba(0,0,0,.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Новый ингредиент</h5>
+                    <button class="btn-close" @onclick="() => showCreateIng = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3"><label class="form-label small">Название *</label><input required minlength="2" maxlength="120" class="form-control" @bind="ingForm.Name" /></div>
+                    <div class="row g-2">
+                        <div class="col-6"><label class="form-label small">Остаток *</label><input required step="0.01" max="1000000" class="form-control" type="number" min="0" @bind="ingForm.Stock" /></div>
+                        <div class="col-6">
+                            <label class="form-label small">Ед. *</label>
+                            <select required class="form-select" @bind="ingForm.Unit">
+                                <option value="">— выбрать —</option>
+                                <option value="шт">шт</option>
+                                <option value="кг">кг</option>
+                                <option value="г">г</option>
+                                <option value="л">л</option>
+                                <option value="мл">мл</option>
+                                <option value="уп">уп</option>
+                                <option value="бутылка">бутылка</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <label class="form-label small">Цена за единицу (₽) — для расчёта себестоимости</label>
+                        <input required max="1000000" class="form-control" type="number" min="0" step="0.01" @bind="ingForm.PricePerUnit" placeholder="0.00" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => showCreateIng = false">Отмена</button>
+                    <button class="btn btn-warning" data-validate="true" @onclick="CreateIng">Создать</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Модал: поступление -->
+@if (showStock)
+{
+    <div class="modal show d-block" tabindex="-1" style="background:rgba(0,0,0,.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Поступление товара</h5>
+                    <button class="btn-close" @onclick="() => showStock = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small">Ингредиент</label>
+                        <select data-choice="true" class="form-select" @bind="stockForm.IngredientID">
+                            <option value="0">— выбрать —</option>
+                            @foreach (var i in ingredients)
+                            {
+                                <option value="@i.IngredientID">@i.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="mb-3"><label class="form-label small">Количество</label><input required step="0.01" max="1000000" class="form-control" type="number" min="0.01" @bind="stockForm.Amount" /></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => showStock = false">Отмена</button>
+                    <button class="btn btn-warning" data-validate="true" @onclick="AddStock">Добавить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Модал: новая техкарта -->
+@if (showCreateTC)
+{
+    <div class="modal show d-block" tabindex="-1" style="background:rgba(0,0,0,.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Добавить техкарту</h5>
+                    <button class="btn-close" @onclick="() => showCreateTC = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small">Блюдо *</label>
+                        <select data-choice="true" class="form-select" @bind="tcForm.MenuItemID">
+                            <option value="0">— выбрать —</option>
+                            @foreach (var m in menuItems)
+                            {
+                                <option value="@m.MenuItemID">@m.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Ингредиент *</label>
+                        <select data-choice="true" class="form-select" @bind="tcForm.IngredientID">
+                            <option value="0">— выбрать —</option>
+                            @foreach (var i in ingredients)
+                            {
+                                <option value="@i.IngredientID">@i.Name (@UnitLabel(i.Unit))</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Количество на порцию *</label>
+                        <input required max="1000000" class="form-control" type="number" min="0.01" step="0.01" @bind="tcForm.Quantity" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => showCreateTC = false">Отмена</button>
+                    <button class="btn btn-warning" data-validate="true" @onclick="CreateTC">Добавить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<div class="row g-3 mt-2">
+    <div class="col-12 col-xl-6"><div class="card border-0 shadow-sm h-100"><div class="card-header bg-white fw-bold">Заявки на поставку</div><div class="card-body">
+        @if (!suppliers.Any()) { <div class="alert alert-warning py-2 small">Сначала создайте учётную запись с ролью «Поставщик» в разделе «Персонал».</div> }
+        <div class="row g-2 mb-3"><div class="col-12 col-md-4"><select data-choice="true" class="form-select" @bind="supplyForm.IngredientID"><option value="0">Ингредиент</option>@foreach(var i in ingredients){<option value="@i.IngredientID">@i.Name</option>}</select></div><div class="col-12 col-md-3"><input required max="1000000" class="form-control" type="number" min="0.01" step="0.01" @bind="supplyForm.Quantity" placeholder="Кол-во" /></div><div class="col-12 col-md-5"><select data-choice="true" class="form-select" @bind="supplyForm.SupplierUserID"><option value="0">Выберите поставщика</option>@foreach(var u in suppliers){<option value="@u.UserID">@SupplierDisplayName(u.UserName)</option>}</select></div></div>
+        <button class="btn btn-warning btn-sm mb-3" data-validate="true" @onclick="CreateSupply" disabled="@(!suppliers.Any())">Заказать поставку</button>
+        @foreach (var s in supplyRequests){<div class="d-flex justify-content-between align-items-center border-top py-2 gap-2"><span>@s.IngredientName — @s.Quantity · @SupplierDisplayName(s.SupplierUserName) <span class="badge bg-secondary">@SupplyStatus(s.Status)</span></span>@if(s.Status is "Requested" or "Accepted"){<button class="btn btn-sm btn-outline-success" @onclick="() => ReceiveSupply(s.SupplyRequestID)">Отметить получение</button>}</div>}
+    </div></div></div>
+    <div class="col-12 col-xl-6"><div class="card border-0 shadow-sm h-100"><div class="card-header bg-white fw-bold">Инвентаризация</div><div class="card-body">
+        @foreach(var count in stocktakeForm.Items){var ingredient = ingredients.FirstOrDefault(x => x.IngredientID == count.IngredientID); if(ingredient != null){<div class="row align-items-center mb-2"><div class="col-6">@ingredient.Name (@UnitLabel(ingredient.Unit)) · учёт: @ingredient.Stock</div><div class="col-6"><input required max="1000000" class="form-control form-control-sm" type="number" min="0" step="0.01" @bind="count.CountedStock" /></div></div>}}
+        <input  maxlength="1000" class="form-control mb-2" @bind="stocktakeForm.Notes" placeholder="Комментарий к пересчёту" />
+        <button class="btn btn-warning btn-sm" data-validate="true" @onclick="SaveStocktake" disabled="@(!stocktakeForm.Items.Any())">Сверить и сохранить остатки</button>
+        <hr /><strong>Последние сверки</strong>@foreach(var take in stocktakes.Take(5)){<div class="small text-muted">#@take.StocktakeID · @take.CreatedAt.ToLocalTime().ToString("dd.MM HH:mm") · @take.Notes · позиций: @take.Items.Count</div>}
+    </div></div></div>
+</div>
+
+@code {
+    private string activeTab = "ingredients";
+    private List<Ingredient> ingredients = new();
+    private List<TechCard> techCards = new();
+    private List<MenuItem> menuItems = new();
+    private bool showCreateIng, showStock, showCreateTC;
+    private CreateIngredientRequest ingForm = new();
+    private AddStockRequest stockForm = new();
+    private CreateTechCardRequest tcForm = new();
+    private SupplyRequestCreate supplyForm = new();
+    private StocktakeRequest stocktakeForm = new();
+    private List<SupplyRequestDto> supplyRequests = new();
+    private List<UserMini> suppliers = new();
+    private List<StocktakeDto> stocktakes = new();
+    private string errorMessage = "", successMessage = "";
+
+    private static string UnitLabel(string? unit) => unit?.Trim().ToLowerInvariant() switch
+    {
+        "kg" or "кг" => "кг",
+        "pcs" or "pc" or "шт" => "шт.",
+        "g" or "гр" or "г" => "г",
+        "l" or "л" => "л",
+        "ml" or "мл" => "мл",
+        "pack" or "уп" => "уп.",
+        "bottle" or "бутылка" => "бут.",
+        _ => unit?.Trim() ?? ""
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthService.InitializeAsync();
+        if (!AuthService.IsAuthenticated()) { Nav.NavigateTo("/", forceLoad: true); return; }
+        if (AuthService.GetCurrentRole() != 1) { Nav.NavigateTo("/home", forceLoad: true); return; }
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        ingredients = await Api.GetIngredientsAsync();
+        menuItems = await Api.GetMenuAsync();
+        supplyRequests = await Api.GetSupplyRequestsAsync();
+        suppliers = await Api.GetSuppliersAsync();
+        stocktakes = await Api.GetStocktakesAsync();
+        if (!stocktakeForm.Items.Any()) stocktakeForm.Items = ingredients.Select(i => new StocktakeCountRequest { IngredientID = i.IngredientID, CountedStock = i.Stock }).ToList();
+    }
+
+    private async Task CreateSupply()
+    {
+        var r = await Api.CreateSupplyRequestAsync(supplyForm);
+        if (r?.Status == true) { supplyForm = new(); await Load(); successMessage = "Заявка создана"; }
+        else errorMessage = r?.Message ?? "Не удалось создать заявку";
+    }
+
+    private static string SupplyStatus(string status) => status switch
+    {
+        "Draft" => "Черновик",
+        "Requested" => "Ожидает ответа поставщика",
+        "Accepted" => "Поставщик подтвердил",
+        "Received" => "Получено",
+        "Cancelled" => "Отменена",
+        "Rejected" => "Отклонена",
+        _ => status
+    };
+
+    private static string SupplierDisplayName(string? name)
+    {
+        var value = name?.Trim() ?? "";
+        return value.Equals("Demo Supplier", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("Демо Поставщик", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("Демо поставщик", StringComparison.OrdinalIgnoreCase)
+            ? "Поставщик"
+            : string.IsNullOrWhiteSpace(value) ? "Не назначен" : value;
+    }
+
+    private async Task ReceiveSupply(int id)
+    {
+        var r = await Api.ReceiveSupplyAsync(id);
+        if (r?.Status == true) { supplyRequests = await Api.GetSupplyRequestsAsync(); ingredients = await Api.GetIngredientsAsync(); stocktakeForm.Items = ingredients.Select(i => new StocktakeCountRequest { IngredientID = i.IngredientID, CountedStock = i.Stock }).ToList(); successMessage = r.Message; }
+        else errorMessage = r?.Message ?? "Не удалось принять поставку";
+    }
+
+    private async Task SaveStocktake()
+    {
+        var r = await Api.CreateStocktakeAsync(stocktakeForm);
+        if (r?.Status == true) { stocktakeForm = new(); await Load(); successMessage = "Инвентаризация сохранена, остатки скорректированы"; }
+        else errorMessage = r?.Message ?? "Не удалось сохранить инвентаризацию";
+    }
+
+    private async Task SwitchToTechCards()
+    {
+        activeTab = "techcards";
+        if (!techCards.Any())
+            techCards = await Api.GetTechCardsAsync();
+    }
+
+    private async Task CreateIng()
+    {
+        if (string.IsNullOrWhiteSpace(ingForm.Name)) { errorMessage = "Введите название"; AutoHide(); return; }
+        if (string.IsNullOrWhiteSpace(ingForm.Unit)) { errorMessage = "Введите единицу"; AutoHide(); return; }
+        var r = await Api.CreateIngredientAsync(ingForm);
+        if (r?.Status == true) { successMessage = "Добавлено"; showCreateIng = false; ingForm = new(); await Load(); }
+        else errorMessage = r?.Message ?? "Ошибка";
+        AutoHide();
+    }
+
+    private async Task AddStock()
+    {
+        if (stockForm.IngredientID <= 0 || stockForm.Amount <= 0) { errorMessage = "Заполните поля"; AutoHide(); return; }
+        var r = await Api.AddStockAsync(stockForm);
+        if (r?.Status == true) { successMessage = "Поступление зафиксировано"; showStock = false; stockForm = new(); await Load(); }
+        else errorMessage = r?.Message ?? "Ошибка";
+        AutoHide();
+    }
+
+    private async Task CreateTC()
+    {
+        if (tcForm.MenuItemID <= 0 || tcForm.IngredientID <= 0 || tcForm.Quantity <= 0)
+        { errorMessage = "Заполните все поля"; AutoHide(); return; }
+        var r = await Api.CreateTechCardAsync(tcForm);
+        if (r?.Status == true)
+        {
+            successMessage = "Техкарта добавлена"; showCreateTC = false; tcForm = new();
+            techCards = await Api.GetTechCardsAsync();
+        }
+        else errorMessage = r?.Message ?? "Ошибка";
+        AutoHide();
+    }
+
+    private void AutoHide()
+    {
+        _ = Task.Delay(2500).ContinueWith(_ => { errorMessage = ""; successMessage = ""; InvokeAsync(StateHasChanged); });
+    }
+}

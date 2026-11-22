@@ -1,0 +1,754 @@
+@page "/guest"
+@page "/guest/{TableId:int}"
+@layout MainLayout
+@implements IAsyncDisposable
+@using RestaurantBlazor.Services
+@using RestaurantBlazor.Models
+@inject ApiService Api
+@inject IAuthService AuthService
+@inject KitchenHubService HubService
+@inject NavigationManager Nav
+
+<PageTitle>Меню</PageTitle>
+
+<style>
+    .order-type-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 20px;
+        border-radius: 14px;
+        border: 2px solid #ebe7e0;
+        background: #fff;
+        cursor: pointer;
+        transition: all .2s;
+        font-weight: 600;
+        font-size: 14px;
+        color: #1a1a1a;
+        min-height: 90px;
+    }
+
+        .order-type-btn:hover {
+            border-color: #c8102e;
+            background: #fde8eb;
+            color: #c8102e;
+        }
+
+        .order-type-btn.selected {
+            border-color: #c8102e;
+            background: #fde8eb;
+            color: #c8102e;
+        }
+
+        .order-type-btn i {
+            font-size: 26px;
+        }
+
+    .menu-item-card {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 16px;
+        border: 1px solid #ebe7e0;
+        border-radius: 12px;
+        margin-bottom: 8px;
+        background: #fff;
+        cursor: pointer;
+        transition: border-color .15s, box-shadow .15s;
+    }
+    .menu-item-card:hover { border-color:#c8102e; box-shadow:0 7px 18px #0000000c; }
+    .menu-item-info{display:flex;align-items:center;gap:14px;min-width:0}
+    .dish-details-btn{flex:none;border:0;background:transparent;color:#9b3e2b;padding:6px 2px;font-size:12px;font-weight:700;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+    .dish-details-btn:hover,.dish-details-btn:focus-visible{color:#6f2418}
+
+    .qty-control {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .qty-btn {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 2px solid #c8102e;
+        background: transparent;
+        color: #c8102e;
+        font-size: 18px;
+        font-weight: 700;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all .15s;
+    }
+
+        .qty-btn:hover {
+            background: #c8102e;
+            color: #fff;
+        }
+
+    .qty-num {
+        font-weight: 700;
+        font-size: 16px;
+        min-width: 20px;
+        text-align: center;
+    }
+</style>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger app-notice" role="alert">@errorMessage<button class="app-notice-close" aria-label="Закрыть" @onclick="() => errorMessage = string.Empty">×</button></div>
+}
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="alert alert-success app-notice" role="status">@successMessage<button class="app-notice-close" aria-label="Закрыть" @onclick="() => successMessage = string.Empty">×</button></div>
+}
+
+<div class="d-flex justify-content-end gap-2 mb-3">
+    @if (!orderPlaced)
+    {
+        <button class="btn btn-outline-warning" @onclick="() => showReservation = true"><i class="bi bi-calendar-plus me-1"></i>Забронировать стол</button>
+    }
+</div>
+
+@if (!orderPlaced)
+{
+    <!-- ШАГ 1: Выбор типа заказа -->
+    @if (step == 1)
+    {
+        <div class="text-center mb-4">
+            <span class="eyebrow">ПРИГОТОВИМ С ТЕПЛОМ</span>
+            <h2 class="fw-bold mt-2">Как накроем ваш стол?</h2>
+            <p class="text-muted">Приходите к нам, заберите с собой или ждите дома.</p>
+        </div>
+        <div class="row g-3 justify-content-center" style="max-width:500px;margin:0 auto;">
+            <div class="col-4">
+                <button class="order-type-btn w-100 @(orderType == "DineIn" ? "selected" : "")"
+                        @onclick='() => SelectType("DineIn")'>
+                    <i class="bi bi-grid-3x3-gap-fill"></i>
+                    В ресторане
+                </button>
+            </div>
+            <div class="col-4">
+                <button class="order-type-btn w-100 @(orderType == "Delivery" ? "selected" : "")"
+                        @onclick='() => SelectType("Delivery")'>
+                    <i class="bi bi-truck"></i>
+                    Доставка
+                </button>
+            </div>
+            <div class="col-4">
+                <button class="order-type-btn w-100 @(orderType == "Takeaway" ? "selected" : "")"
+                        @onclick='() => SelectType("Takeaway")'>
+                    <i class="bi bi-bag-check"></i>
+                    Самовывоз
+                </button>
+            </div>
+        </div>
+
+        @if (orderType == "DineIn")
+        {
+            <div class="mt-4" style="max-width:400px;margin:0 auto;">
+                <label class="form-label fw-bold">Выберите филиал</label>
+                <select class="form-select mb-3" @bind="selectedBranchId" @bind:after="OnBranchChanged">
+                    <option value="0">— выберите филиал —</option>
+                    @foreach (var branch in branches)
+                    {
+                        <option value="@branch.BranchID">@branch.Name — @branch.Address</option>
+                    }
+                </select>
+                <label class="form-label fw-bold">Выберите стол</label>
+                <select  class="form-select" @bind="selectedTableId">
+                    <option value="0">— выбрать стол —</option>
+                    @foreach (var t in tables)
+                    {
+                        <option value="@t.TableID">Стол @t.Number (мест: @t.Capacity)</option>
+                    }
+                </select>
+                @if (selectedTableId > 0)
+                {
+                    <div class="text-center mt-3">
+                        <img src="@QrUrl" alt="QR" style="width:150px;height:150px;border:1px solid #eee;border-radius:10px;" />
+                        <div class="text-muted small mt-1">QR-код вашего стола</div>
+                    </div>
+                }
+            </div>
+        }
+
+        @if (orderType == "Delivery")
+        {
+            <div class="mt-4" style="max-width:400px;margin:0 auto;">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Филиал отправления *</label>
+                    <select class="form-select" @bind="selectedBranchId" @bind:after="OnBranchChanged">
+                        <option value="0">— выберите филиал —</option>
+                        @foreach (var branch in branches)
+                        {
+                            <option value="@branch.BranchID">@branch.Name — @branch.Address</option>
+                        }
+                    </select>
+                    <small class="text-muted">Курьер увидит выбранный филиал в своей карточке доставки.</small>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Адрес доставки *</label>
+                    <input data-kind="address" required minlength="8" maxlength="300" class="form-control" @bind="deliveryAddress" placeholder="ул. Пушкина, д. 10, кв. 5" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Телефон *</label>
+                    <RestaurantBlazor.Shared.PhoneInput @bind-Value="deliveryPhone" />
+                </div>
+            </div>
+        }
+
+        @if (orderType == "Takeaway")
+        {
+            <div class="mt-4" style="max-width:400px;margin:0 auto;">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Адрес филиала для самовывоза *</label>
+                    <select class="form-select" @bind="selectedBranchId" @bind:after="OnBranchChanged">
+                        <option value="0">— выберите филиал —</option>
+                        @foreach (var branch in branches)
+                        {
+                            <option value="@branch.BranchID">@branch.Name — @branch.Address</option>
+                        }
+                    </select>
+                </div>
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle me-2"></i>
+                    Заказ будет готов к выдаче в выбранном филиале. Мы уведомим вас, когда он будет готов.
+                </div>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(orderType))
+        {
+            <div class="text-center mt-4">
+                <button class="btn btn-warning px-5" @onclick="GoToMenu">
+                    <i class="bi bi-card-list me-2"></i>
+                    @(orderType == "Takeaway" ? "Перейти к меню и оформить заказ" : "Перейти к меню")
+                </button>
+            </div>
+        }
+    }
+
+    <!-- ШАГ 2: Меню и корзина -->
+    @if (step == 2)
+    {
+        <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+            <div>
+                <button class="btn btn-outline-secondary btn-sm mb-2" @onclick="() => step = 1">
+                    <i class="bi bi-arrow-left me-1"></i>Назад
+                </button>
+                <h2 class="fw-bold mb-0">
+                    <i class="bi bi-card-list me-2"></i>Меню
+                </h2>
+                <div class="text-muted small">
+                    @if (orderType == "DineIn")
+                    {
+                        <span><i class="bi bi-grid-3x3-gap-fill me-1"></i>Стол @(tables.FirstOrDefault(t => t.TableID == selectedTableId)?.Number)</span>
+                    }
+                    @if (orderType == "Delivery")
+                    {
+                        <span><i class="bi bi-truck me-1"></i>Доставка: @deliveryAddress</span>
+                    }
+                    @if (orderType == "Takeaway")
+                    {
+                        <span><i class="bi bi-bag-check me-1"></i>Самовывоз</span>
+                    }
+                </div>
+            </div>
+            <button class="btn btn-warning" @onclick="GoToCart" disabled="@(cart.Count == 0)">
+                <i class="bi bi-cart me-1"></i>Корзина (@cart.Sum(c => c.Quantity)) — @cart.Sum(c => c.Quantity * (menu.FirstOrDefault(m => m.MenuItemID == c.MenuItemID)?.Price ?? 0)).ToString("N0") ₽
+            </button>
+        </div>
+
+        @if (!menu.Any())
+        {
+            <div class="text-center py-5 text-muted">Меню пустое</div>
+        }
+        else
+        {
+            @foreach (var cat in menu.Where(m => m.IsAvailable).GroupBy(m => m.Category))
+            {
+                <h5 class="fw-bold text-secondary mt-4 mb-3"><i class="bi bi-tag me-2"></i>@cat.Key</h5>
+                @foreach (var m in cat)
+                {
+                    var inCart = cart.FirstOrDefault(c => c.MenuItemID == m.MenuItemID);
+                    <div class="menu-item-card" role="button" tabindex="0" aria-label="Подробнее о блюде @m.Name" @onclick="() => OpenDish(m)">
+                        <div class="menu-item-info">
+                            <div>
+                            <div class="fw-semibold">@m.Name</div>
+                            <div class="text-warning fw-bold">@m.Price.ToString("N0") ₽</div>
+                            </div>
+                            <button type="button" class="dish-details-btn" aria-label="Посмотреть состав и информацию о блюде @m.Name" @onclick:stopPropagation="true" @onclick="() => OpenDish(m)">
+                                <i class="bi bi-info-circle me-1"></i>Подробнее
+                            </button>
+                        </div>
+                        <div class="qty-control">
+                            @if (inCart != null)
+                            {
+                                <button class="qty-btn" @onclick:stopPropagation="true" @onclick="() => Dec(m.MenuItemID)">−</button>
+                                <span class="qty-num">@inCart.Quantity</span>
+                            }
+                            <button class="qty-btn" @onclick:stopPropagation="true" @onclick="() => Inc(m.MenuItemID)">+</button>
+                        </div>
+                    </div>
+                }
+            }
+        }
+    }
+
+    <!-- ШАГ 3: Корзина и подтверждение -->
+    @if (step == 3)
+    {
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <button class="btn btn-outline-secondary btn-sm mb-2" @onclick="() => step = 2">
+                    <i class="bi bi-arrow-left me-1"></i>Назад в меню
+                </button>
+                <h2 class="fw-bold mb-0"><i class="bi bi-cart me-2"></i>Ваш заказ</h2>
+            </div>
+        </div>
+
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-body">
+                @foreach (var c in cart)
+                {
+                    var item = menu.FirstOrDefault(m => m.MenuItemID == c.MenuItemID);
+                    if (item == null) continue;
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <div class="fw-semibold">@item.Name</div>
+                            <div class="text-muted small">@item.Price.ToString("N0") ₽ × @c.Quantity</div>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <div class="qty-control">
+                                <button class="qty-btn" @onclick="() => Dec(c.MenuItemID)">−</button>
+                                <span class="qty-num">@c.Quantity</span>
+                                <button class="qty-btn" @onclick="() => Inc(c.MenuItemID)">+</button>
+                            </div>
+                            <strong>@((item.Price * c.Quantity).ToString("N0")) ₽</strong>
+                        </div>
+                    </div>
+                }
+                <hr />
+                <div class="d-flex justify-content-between fw-bold fs-5">
+                    <span>Итого</span>
+                    <span class="text-warning">@TotalPrice.ToString("N0") ₽</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Детали заказа -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-body">
+                <h6 class="fw-bold mb-3">Детали заказа</h6>
+                @if (orderType == "DineIn")
+                {
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted">Тип</span><strong>В ресторане</strong>
+                    </div>
+                    <div class="d-flex justify-content-between">
+                        <span class="text-muted">Стол</span>
+                        <strong>Стол @(tables.FirstOrDefault(t => t.TableID == selectedTableId)?.Number)</strong>
+                    </div>
+                }
+                @if (orderType == "Delivery")
+                {
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted">Тип</span><strong>Доставка</strong>
+                    </div>
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted">Филиал отправления</span><strong>@pickupAddress</strong>
+                    </div>
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted">Адрес</span><strong>@deliveryAddress</strong>
+                    </div>
+                    <div class="d-flex justify-content-between">
+                        <span class="text-muted">Телефон</span><strong>@deliveryPhone</strong>
+                    </div>
+                }
+                @if (orderType == "Takeaway")
+                {
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted">Тип</span><strong>Самовывоз</strong>
+                    </div>
+                    <div class="d-flex justify-content-between">
+                        <span class="text-muted">Забрать из филиала</span><strong>@pickupAddress</strong>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <button class="btn btn-warning w-100 py-3 fw-bold fs-5" @onclick="PlaceOrder" disabled="@isLoading">
+            @if (isLoading)
+            {
+                <span class="spinner-border spinner-border-sm me-2"></span>
+            }
+            <i class="bi bi-check-circle me-2"></i>Оформить заказ
+        </button>
+    }
+}
+
+@if (showReservation)
+{
+    <div class="modal show d-block" tabindex="-1" style="background:rgba(0,0,0,.5);z-index:1040"><div class="modal-dialog"><div class="modal-content">
+        <div class="modal-header"><h5 class="modal-title">Бронирование стола</h5><button class="btn-close" @onclick="() => showReservation = false"></button></div>
+        <div class="modal-body">
+            <label class="form-label">Стол</label><select data-choice="true" class="form-select mb-2" @bind="reservationForm.TableID"><option value="0">Выберите стол</option>@foreach(var t in tables.Where(t => t.Status != "Occupied")){<option value="@t.TableID">Стол @t.Number · до @t.Capacity гостей</option>}</select>
+            <label class="form-label">Дата и время</label><input required class="form-control mb-2" type="datetime-local" max="@DateTime.Now.AddYears(1).ToString("yyyy-MM-ddTHH:mm")" min="@DateTime.Now.ToString("yyyy-MM-ddTHH:mm")" @bind="reservationForm.DateTime" />
+            <label class="form-label">Количество гостей</label><input required max="@(tables.FirstOrDefault(t => t.TableID == reservationForm.TableID)?.Capacity ?? 30)" class="form-control mb-2" type="number" min="1" @bind="reservationForm.Persons" />
+            <label class="form-label">Имя</label><input required minlength="2" data-kind="name" maxlength="80" class="form-control mb-2" @bind="reservationForm.GuestName" />
+            <label class="form-label">Телефон</label><RestaurantBlazor.Shared.PhoneInput @bind-Value="reservationForm.GuestPhone" />
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" @onclick="() => showReservation = false">Отмена</button><button class="btn btn-warning" data-validate="true" @onclick="CreateGuestReservation">Забронировать</button></div>
+    </div></div></div>
+}
+@if (orderPlaced)
+{
+    <!-- Заказ оформлен -->
+    <div class="text-center py-5">
+        <div class="mb-4" style="font-size:72px;">✅</div>
+        <h2 class="fw-bold mb-2">Заказ принят!</h2>
+        @if (!string.IsNullOrEmpty(trackingMessage))
+        {
+            <div class="alert alert-info d-inline-flex align-items-center mb-3">
+                <i class="bi bi-bell me-2"></i>@trackingMessage
+            </div>
+            <br />
+        }
+        <p class="text-muted mb-4">
+            @if (orderType == "DineIn")
+            {
+                <span>Ваш заказ передан на кухню. Ожидайте!</span>
+            }
+            @if (orderType == "Delivery")
+            {
+                <span>Заказ принят. Курьер скоро выедет к вам.</span>
+            }
+            @if (orderType == "Takeaway")
+            {
+                <span>Заказ принят. Мы уведомим вас о готовности.</span>
+            }
+        </p>
+        <div class="card border-0 shadow-sm d-inline-block px-5 py-3 mb-4">
+            <div class="text-muted small mb-1">Сумма заказа</div>
+            <div class="fs-2 fw-bold text-warning">@TotalPrice.ToString("N0") ₽</div>
+        </div>
+        <br />
+        <div class="mb-3">
+            <button class="btn btn-primary" @onclick="StartOnlinePayment" disabled="@(!canPayOnline || isStartingOnlinePayment)">
+                @if (isStartingOnlinePayment) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                <i class="bi bi-credit-card me-1"></i>Оплатить онлайн через ЮKassa
+            </button>
+            @if (!canPayOnline)
+            {
+                <div class="small text-muted mt-1">Кнопка станет доступна после того, как кухня отметит заказ готовым.</div>
+            }
+        </div>
+        @if (orderType == "DineIn" && selectedTableId > 0)
+        {
+            <div class="d-flex gap-3 justify-content-center mt-3">
+                <button class="btn btn-outline-secondary" @onclick="CallWaiter">
+                    <i class="bi bi-bell me-1"></i>Позвать официанта
+                </button>
+                <button class="btn btn-outline-success" @onclick="RequestBill">
+                    <i class="bi bi-cash-coin me-1"></i>Оплатить счёт
+                </button>
+            </div>
+            <div class="mx-auto mt-3" style="max-width:320px"><select  class="form-select mb-2" @bind="paymentMethod"><option value="Cash">Наличными официанту</option><option value="CardTerminal">Картой у официанта</option></select><button class="btn btn-success w-100" @onclick="PayAtRestaurant"><i class="bi bi-credit-card me-1"></i>Я оплатил заказ</button></div>
+        }
+        <br />
+        <button class="btn btn-warning mt-4" @onclick="Reset">
+            <i class="bi bi-arrow-repeat me-1"></i>Сделать новый заказ
+        </button>
+    </div>
+}
+
+@if (selectedDish != null)
+{
+    <div class="modal show d-block" tabindex="-1" style="background:rgba(0,0,0,.55);z-index:1055" role="dialog" aria-modal="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg"><div class="modal-content border-0 shadow-lg overflow-hidden"><div class="row g-0">
+            <div class="col-md-5 bg-light d-flex align-items-center justify-content-center" style="min-height:260px">
+                @if (GetImageSource(selectedDish) is string dishImage)
+                { <img src="@dishImage" alt="@selectedDish.Name" class="w-100 h-100" style="object-fit:cover;min-height:260px" /> }
+                else
+                { <div class="text-center text-secondary p-5"><i class="bi bi-egg-fried" style="font-size:86px;color:#c8102e"></i><div class="small mt-2">Изображение блюда не добавлено</div></div> }
+            </div>
+            <div class="col-md-7"><div class="modal-header border-0 pb-0"><span class="badge text-bg-light">@selectedDish.Category</span><button class="btn-close" aria-label="Закрыть" @onclick="CloseDish"></button></div>
+                <div class="modal-body pt-2"><h3 class="fw-bold">@selectedDish.Name</h3><div class="fs-3 fw-bold text-danger mb-3">@selectedDish.Price.ToString("N0") ₽</div>
+                    <h6 class="fw-bold mb-1">Состав</h6><p class="text-muted">@(string.IsNullOrWhiteSpace(selectedDish.Description) ? "Состав пока не указан. Уточните у сотрудника ресторана." : selectedDish.Description)</p>
+                    <div class="d-flex gap-2 flex-wrap mb-3"><span class="badge rounded-pill text-bg-light">Масса @selectedDish.WeightGrams г</span><span class="badge rounded-pill text-bg-light">@selectedDish.Calories.ToString("0.#") ккал</span></div>
+                    <h6 class="fw-bold mb-2">БЖУ на порцию</h6><div class="d-flex gap-2 flex-wrap"><span class="badge rounded-pill text-bg-light">Белки @selectedDish.Protein.ToString("0.#") г</span><span class="badge rounded-pill text-bg-light">Жиры @selectedDish.Fat.ToString("0.#") г</span><span class="badge rounded-pill text-bg-light">Углеводы @selectedDish.Carbohydrates.ToString("0.#") г</span></div>
+                </div><div class="modal-footer border-0"><button class="btn btn-outline-secondary" @onclick="CloseDish">Закрыть</button><button class="btn btn-warning" disabled="@(!selectedDish.IsAvailable)" @onclick="AddSelectedDishToCart"><i class="bi bi-cart-plus me-1"></i>Добавить в корзину</button></div>
+            </div>
+        </div></div></div>
+    </div>
+}
+
+@code {
+    [Parameter] public int TableId { get; set; }
+
+    private int step = 1;
+    private string orderType = "";
+    private int selectedTableId;
+    private string deliveryAddress = "";
+    private string deliveryPhone = "";
+    private int selectedBranchId;
+    private string pickupAddress => branches.FirstOrDefault(b => b.BranchID == selectedBranchId)?.Address ?? "";
+    private List<BranchDto> branches = new();
+    private List<RestaurantTable> tables = new();
+    private List<MenuItem> menu = new();
+    private List<OrderItemRequest> cart = new();
+    private bool orderPlaced;
+    private bool isLoading;
+    private bool canPayOnline;
+    private bool isStartingOnlinePayment;
+    private int placedOrderId;
+    private string errorMessage = "", successMessage = "", trackingMessage = "";
+    private bool showReservation;
+    private MenuItem? selectedDish;
+    private ReservationRequest reservationForm = new() { DateTime = DateTime.Now.AddHours(1), Persons = 2 };
+    private string paymentMethod = "Cash";
+
+    private decimal TotalPrice => cart.Sum(c => c.Quantity * (menu.FirstOrDefault(m => m.MenuItemID == c.MenuItemID)?.Price ?? 0));
+    private static string? GetImageSource(MenuItem item) =>
+        item.ImageData is { Length: > 0 } && !string.IsNullOrWhiteSpace(item.ImageMimeType)
+            ? $"data:{item.ImageMimeType};base64,{Convert.ToBase64String(item.ImageData)}"
+            : string.IsNullOrWhiteSpace(item.ImageUrl) ? null : item.ImageUrl;
+    private string QrUrl => selectedTableId > 0 ? $"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=table:{selectedTableId}" : "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthService.InitializeAsync();
+        if (!AuthService.IsAuthenticated()) { Nav.NavigateTo("/", forceLoad: true); return; }
+        if (AuthService.GetCurrentRole() is not (4 or 6)) { Nav.NavigateTo("/home", forceLoad: true); return; }
+
+        HubService.OnDeliveryStatusChanged += OnTrackingMessage;
+        HubService.OnOrderStatusChanged += OnTrackingMessage;
+        await HubService.StartAsync();
+
+        branches = await Api.GetBranchesAsync();
+        tables = await Api.GetTablesAsync();
+
+        // Если пришли по QR-коду с номером стола
+        if (TableId > 0)
+        {
+            selectedTableId = TableId;
+            selectedBranchId = tables.FirstOrDefault(t => t.TableID == TableId)?.BranchID ?? branches.FirstOrDefault()?.BranchID ?? 0;
+            orderType = "DineIn";
+            tables = tables.Where(t => t.BranchID == selectedBranchId).ToList();
+            menu = await Api.GetMenuAsync(selectedBranchId);
+        }
+    }
+
+    private void SelectType(string type)
+    {
+        orderType = type;
+        if (type != "DineIn") selectedTableId = 0;
+    }
+
+    private void GoToMenu()
+    {
+        if (orderType == "DineIn" && selectedTableId <= 0)
+        { errorMessage = "Выберите стол"; AutoHide(); return; }
+        if (selectedBranchId <= 0)
+        { errorMessage = "Выберите филиал"; AutoHide(); return; }
+        if ((orderType is "Delivery" or "Takeaway") && string.IsNullOrWhiteSpace(pickupAddress))
+        { errorMessage = "Выберите филиал"; AutoHide(); return; }
+        if (orderType == "Delivery" && string.IsNullOrWhiteSpace(deliveryAddress))
+        { errorMessage = "Введите адрес доставки"; AutoHide(); return; }
+        if (orderType == "Delivery" && string.IsNullOrWhiteSpace(deliveryPhone))
+        { errorMessage = "Введите телефон"; AutoHide(); return; }
+        if (orderType == "Delivery" && Ochag.Validation.InputRules.DeliveryError(deliveryAddress, deliveryPhone) is string deliveryError)
+        { errorMessage = deliveryError; return; }
+        errorMessage = "";
+        var menuUrl = $"/menu?orderType={Uri.EscapeDataString(orderType)}&branchId={selectedBranchId}";
+        if (orderType == "DineIn")
+            menuUrl += $"&tableId={selectedTableId}";
+        else if (orderType == "Delivery")
+            menuUrl += $"&deliveryAddress={Uri.EscapeDataString(deliveryAddress)}&deliveryPhone={Uri.EscapeDataString(deliveryPhone)}";
+
+        Nav.NavigateTo(menuUrl);
+    }
+
+    private void GoToCart()
+    {
+        if (cart.Count == 0) { errorMessage = "Добавьте блюда в корзину"; AutoHide(); return; }
+        step = 3;
+    }
+
+    private void Inc(int menuItemId)
+    {
+        var c = cart.FirstOrDefault(x => x.MenuItemID == menuItemId);
+        if (c == null) cart.Add(new() { MenuItemID = menuItemId, Quantity = 1 });
+        else if (c.Quantity < 99) c.Quantity++;
+    }
+
+    private void Dec(int menuItemId)
+    {
+        var c = cart.FirstOrDefault(x => x.MenuItemID == menuItemId);
+        if (c == null) return;
+        c.Quantity--;
+        if (c.Quantity <= 0) cart.Remove(c);
+    }
+
+    private async Task PlaceOrder()
+    {
+        if (cart.Count == 0) { errorMessage = "Корзина пуста"; AutoHide(); return; }
+        if (isLoading) return;
+        if (orderType == "Delivery" && Ochag.Validation.InputRules.DeliveryError(deliveryAddress, deliveryPhone) is string deliveryError)
+        { errorMessage = deliveryError; return; }
+        isLoading = true;
+        errorMessage = "";
+
+        var req = new CreateOrderRequest
+        {
+            TableID = orderType == "DineIn" ? selectedTableId : 0,
+            Type = orderType,
+            PickupAddress = pickupAddress,
+            BranchID = selectedBranchId,
+            Items = cart.Select(c => new OrderItemRequest { MenuItemID = c.MenuItemID, Quantity = c.Quantity }).ToList(),
+            WaiterID = AuthService.GetCurrentUserId()
+        };
+
+        var r = await Api.CreateOrderAsync(req);
+        if (r?.Status == true)
+        {
+            placedOrderId = r.OrderId;
+            if (placedOrderId > 0)
+                await HubService.JoinOrderTrackingAsync(placedOrderId);
+
+            if (orderType == "Delivery" && placedOrderId > 0)
+            {
+                var deliveryResult = await Api.CreateDeliveryAsync(new CreateDeliveryRequest
+                {
+                    OrderID = placedOrderId,
+                    Address = deliveryAddress,
+                    ClientPhone = deliveryPhone
+                });
+
+                if (deliveryResult?.Status != true)
+                    errorMessage = deliveryResult?.Message ?? "Заказ создан, но не удалось оформить доставку";
+            }
+            orderPlaced = true;
+            trackingMessage = r.DiscountAmount > 0
+                ? $"Заказ зарегистрирован. Применена скидка {r.DiscountPercent:0.#}% ({r.DiscountReason}), экономия {r.DiscountAmount:N2} ₽. Статус будет обновляться автоматически."
+                : "Заказ зарегистрирован. Статус будет обновляться автоматически.";
+        }
+        else
+        {
+            errorMessage = r?.Message ?? "Не удалось создать заказ";
+        }
+
+        isLoading = false;
+        AutoHide();
+    }
+
+    private async Task OnBranchChanged()
+    {
+        selectedTableId = 0;
+        cart.Clear();
+        if (selectedBranchId <= 0)
+        {
+            tables.Clear();
+            menu.Clear();
+            return;
+        }
+        tables = await Api.GetTablesAsync(selectedBranchId);
+        menu = await Api.GetMenuAsync(selectedBranchId);
+    }
+
+    private async Task CallWaiter()
+    {
+        var r = await Api.CallWaiterAsync(selectedTableId);
+        if (r?.Status == true) successMessage = "Официант скоро подойдёт";
+        else errorMessage = "Не удалось позвать официанта";
+        AutoHide();
+    }
+
+    private async Task RequestBill()
+    {
+        var order = await Api.GetActiveOrderForTableAsync(selectedTableId);
+        if (order == null) { errorMessage = "Активный заказ не найден"; AutoHide(); return; }
+        var r = await Api.RequestBillAsync(order.OrderID);
+        if (r?.Status == true) successMessage = "Счёт запрошен, ожидайте официанта";
+        else errorMessage = "Ошибка";
+        AutoHide();
+    }
+
+    private async Task CreateGuestReservation()
+    {
+        if (reservationForm.TableID <= 0 || reservationForm.Persons <= 0 || string.IsNullOrWhiteSpace(reservationForm.GuestName) || string.IsNullOrWhiteSpace(reservationForm.GuestPhone))
+        { errorMessage = "Заполните все поля бронирования"; return; }
+        var result = await Api.CreateReservationAsync(reservationForm);
+        if (result?.Status == true) { successMessage = "Стол забронирован"; showReservation = false; reservationForm = new() { DateTime = DateTime.Now.AddHours(1), Persons = 2 }; tables = await Api.GetTablesAsync(); }
+        else errorMessage = result?.Message ?? "Не удалось создать бронь";
+    }
+
+    private async Task PayAtRestaurant()
+    {
+        if (placedOrderId <= 0) return;
+        var result = await Api.RequestPaymentAsync(new StartPaymentRequest { OrderID = placedOrderId, Method = paymentMethod });
+        if (result?.Status == true) trackingMessage = result.Message;
+        else errorMessage = result?.Message ?? "Не удалось отправить запрос оплаты";
+    }
+
+    private async Task StartOnlinePayment()
+    {
+        if (placedOrderId <= 0 || !canPayOnline || isStartingOnlinePayment) return;
+        isStartingOnlinePayment = true;
+        errorMessage = "";
+        var result = await Api.StartOnlinePaymentAsync(placedOrderId);
+        isStartingOnlinePayment = false;
+        if (result.Status && Uri.IsWellFormedUriString(result.ConfirmationUrl, UriKind.Absolute))
+            Nav.NavigateTo(result.ConfirmationUrl, forceLoad: true);
+        else
+        {
+            errorMessage = result.Message;
+            AutoHide();
+        }
+    }
+
+    private void OnTrackingMessage(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return;
+        _ = InvokeAsync(() =>
+        {
+            trackingMessage = message;
+            if (message.Contains("заказ готов", StringComparison.OrdinalIgnoreCase) && !message.Contains("готовится", StringComparison.OrdinalIgnoreCase)) canPayOnline = true;
+            if (message.Contains("оплачен", StringComparison.OrdinalIgnoreCase)) canPayOnline = false;
+            StateHasChanged();
+        });
+    }
+
+    private void OpenDish(MenuItem item) => selectedDish = item;
+    private void CloseDish() => selectedDish = null;
+    private void AddSelectedDishToCart() { if (selectedDish != null) Inc(selectedDish.MenuItemID); selectedDish = null; }
+
+    private async Task Reset()
+    {
+        if (placedOrderId > 0)
+            await HubService.LeaveOrderTrackingAsync(placedOrderId);
+
+        step = 1; orderType = ""; selectedTableId = 0;
+        deliveryAddress = ""; deliveryPhone = "";
+        cart.Clear(); orderPlaced = false; placedOrderId = 0; trackingMessage = ""; canPayOnline = false;
+    }
+
+    private void AutoHide()
+    {
+        _ = Task.Delay(3000).ContinueWith(_ => { errorMessage = ""; successMessage = ""; InvokeAsync(StateHasChanged); });
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        HubService.OnDeliveryStatusChanged -= OnTrackingMessage;
+        HubService.OnOrderStatusChanged -= OnTrackingMessage;
+        if (placedOrderId > 0)
+            await HubService.LeaveOrderTrackingAsync(placedOrderId);
+    }
+}
+

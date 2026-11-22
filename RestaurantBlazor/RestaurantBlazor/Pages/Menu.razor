@@ -1,0 +1,509 @@
+@page "/menu"
+@layout MainLayout
+@using RestaurantBlazor.Services
+@using RestaurantBlazor.Models
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components
+@inject ApiService Api
+@inject IAuthService AuthService
+@inject NavigationManager Nav
+
+<PageTitle>Меню</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="fw-bold mb-1"><i class="bi bi-card-list me-2"></i>Меню</h2>
+        <div class="text-muted small">Каталог блюд</div>
+        @if (IsGuestOrder)
+        {
+            <div class="small text-muted mt-2"><i class="bi bi-grid-3x3-gap me-1"></i>@OrderContext</div>
+        }
+    </div>
+    @if (IsGuestOrder)
+    {
+        <button class="btn btn-danger" @onclick="PlaceGuestOrder" disabled="@(orderItems.Count == 0 || isSubmittingOrder || createdOrderId.HasValue)">
+            <i class="bi bi-cart me-1"></i>Корзина (@orderItems.Sum(x => x.Value)) — @OrderTotal.ToString("N0") ₽
+        </button>
+    }
+    @if (AuthService.GetCurrentRole() == 1)
+    {
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-secondary" @onclick="() => showCategoryModal = true">
+                <i class="bi bi-tags me-1"></i>Категории
+            </button>
+            <button class="btn btn-warning" @onclick="ShowCreate">
+                <i class="bi bi-plus-lg me-1"></i>Добавить блюдо
+            </button>
+        </div>
+    }
+</div>
+
+@if (!string.IsNullOrEmpty(errorMessage)) { <div class="alert alert-danger app-notice" role="alert"><i class="bi bi-exclamation-circle me-2"></i>@errorMessage<button class="app-notice-close" aria-label="Закрыть" @onclick="() => errorMessage = string.Empty">×</button></div> }
+@if (!string.IsNullOrEmpty(successMessage)) { <div class="alert alert-success app-notice" role="status"><i class="bi bi-check-circle me-2"></i>@successMessage<button class="app-notice-close" aria-label="Закрыть" @onclick="() => successMessage = string.Empty">×</button></div> }
+
+@if (items == null)
+{
+    <div class="text-center py-5"><div class="spinner-border"></div></div>
+}
+else if (!items.Any())
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-5">
+            <i class="bi bi-card-list text-muted" style="font-size:42px;"></i>
+            <p class="text-muted mb-0 mt-2">Меню пустое</p>
+        </div>
+    </div>
+}
+else
+{
+    @foreach (var cat in items.GroupBy(x => string.IsNullOrWhiteSpace(x.Category) ? "Без категории" : x.Category.Trim()))
+    {
+        <section class="menu-category-section">
+        <h5 class="menu-category-title"><i class="bi bi-tag me-2"></i>@cat.Key</h5>
+        <div class="menu-grid">
+            @foreach (var m in cat)
+            {
+                <article class="menu-card menu-card-clickable @(m.IsAvailable ? "" : "menu-card-unavailable")"
+                         role="button" tabindex="0" aria-label="Посмотреть информацию о блюде @m.Name"
+                         @onclick="() => ShowDetails(m)" @onkeydown="e => OnCardKeyDown(e, m)">
+                    @if (GetImageSource(m) is string imageSource)
+                    {
+                        <img class="menu-card-image" src="@imageSource" alt="@m.Name" />
+                    }
+                    <div class="menu-card-top">
+                        <span class="menu-dish-icon"><i class="bi bi-egg-fried"></i></span>
+                        @if (!m.IsAvailable) { <span class="badge bg-secondary">Недоступно</span> }
+                    </div>
+                    <h6 class="menu-dish-name">@m.Name</h6>
+                    <div class="menu-card-bottom">
+                        <span class="menu-price">@m.Price.ToString("N0") ₽</span>
+                        <span class="menu-station"><i class="bi bi-fire me-1"></i>@(string.IsNullOrWhiteSpace(m.KitchenStation) ? "Общая кухня" : m.KitchenStation)</span>
+                    </div>
+                    <div class="d-flex align-items-center justify-content-between gap-2 mt-auto">
+                        <button type="button" class="menu-details-button" aria-label="Подробнее о блюде @m.Name"
+                                @onclick:stopPropagation="true" @onclick="() => ShowDetails(m)">
+                            <i class="bi bi-info-circle me-1"></i>Подробнее о блюде
+                        </button>
+                        @if (IsGuestOrder)
+                        {
+                            <div class="order-qty-control" @onclick:stopPropagation="true">
+                                @if (GetOrderQuantity(m.MenuItemID) > 0)
+                                {
+                                    <button class="btn btn-sm btn-outline-danger rounded-circle" aria-label="Уменьшить количество" @onclick="() => ChangeOrderQuantity(m.MenuItemID, -1)">−</button>
+                                    <span class="fw-bold">@GetOrderQuantity(m.MenuItemID)</span>
+                                }
+                                <button class="btn btn-sm btn-danger rounded-circle" aria-label="Добавить в заказ" disabled="@(!m.IsAvailable)" @onclick="() => ChangeOrderQuantity(m.MenuItemID, 1)">+</button>
+                            </div>
+                        }
+                    </div>
+                    @if (AuthService.GetCurrentRole() == 1)
+                    {
+                        <div class="menu-card-actions">
+                            <button class="btn btn-sm btn-outline-primary flex-fill" @onclick:stopPropagation="true" @onclick="() => ShowEdit(m)">
+                                <i class="bi bi-pencil me-1"></i>Изменить
+                            </button>
+                            <button class="btn btn-sm @(m.IsAvailable ? "btn-outline-secondary" : "btn-outline-success")"
+                                    title="@(m.IsAvailable ? "Скрыть из меню" : "Вернуть в меню")"
+                                    @onclick:stopPropagation="true" @onclick="() => Toggle(m.MenuItemID)">
+                                <i class="bi @(m.IsAvailable ? "bi-eye" : "bi-eye-slash")"></i>
+                            </button>
+                        </div>
+                    }
+                </article>
+            }
+        </div>
+        </section>
+    }
+}
+
+<style>
+    .menu-category-section{margin:1.6rem 0 2rem}
+    .menu-category-title{display:flex;align-items:center;gap:.4rem;margin:0 0 1rem;padding-bottom:.65rem;border-bottom:1px solid #e7e4df;color:#48423d;font-weight:700}
+    .menu-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,245px),1fr));gap:16px}
+    .menu-card{min-height:190px;display:flex;flex-direction:column;padding:18px;background:#fff;border:1px solid #eee9e3;border-radius:16px;box-shadow:0 5px 18px #352a1b0a;transition:transform .16s ease,box-shadow .16s ease}
+    .menu-card-image{width:calc(100% + 36px);height:160px;object-fit:cover;margin:-18px -18px 14px;border-radius:16px 16px 0 0}
+    .menu-card:hover{transform:translateY(-2px);box-shadow:0 10px 24px #352a1b14}
+    .menu-card-clickable{cursor:pointer}
+    .menu-details-button{align-self:flex-start;margin-top:14px;padding:0;border:0;background:transparent;color:#9b3e2b;font-size:.82rem;font-weight:700;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+    .menu-details-button:hover,.menu-details-button:focus-visible{color:#6f2418}
+    .dish-detail-category,.dish-detail-metric{display:inline-flex;align-items:center;gap:5px;background:#f1e4d0!important;color:#493426!important;border:1px solid #ddc8a8;font-size:.82rem;font-weight:700;line-height:1.35;padding:7px 11px;border-radius:999px;white-space:normal}
+    .dish-detail-category{background:#ead4b4!important;color:#64391f!important}
+    .dish-detail-copy{color:#55483d!important;line-height:1.65}
+    .dish-detail-meta{color:#735d48!important;font-size:.9rem}
+    .dish-detail-nutrition{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+    .dish-detail-nutrition .dish-detail-metric{justify-content:center;border-radius:10px;text-align:center}
+    @@media(max-width:767.98px){.dish-detail-nutrition{grid-template-columns:1fr 1fr}.dish-detail-image{min-height:210px!important;max-height:260px}}
+    .menu-card-unavailable{opacity:.58}
+    .menu-card-top,.menu-card-bottom{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .menu-dish-icon{width:38px;height:38px;display:grid;place-items:center;border-radius:12px;background:#fff1e7;color:#b84c18;font-size:19px}
+    .menu-dish-name{margin:18px 0 14px;font-size:1.08rem;font-weight:700;color:#25211e}
+    .menu-price{font-size:1.35rem;font-weight:800;color:#bd1733;white-space:nowrap}
+    .menu-station{font-size:.72rem;color:#746d65;text-align:right}
+    .menu-card-actions{display:flex;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid #f0ece7}
+    .order-qty-control{display:flex;align-items:center;gap:9px;flex:none}
+    .order-qty-control .btn{width:32px;height:32px;padding:0;font-size:18px;line-height:1}
+</style>
+
+@if (showModal)
+{
+    <div class="modal show d-block" tabindex="-1" style="background:rgba(0,0,0,.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">@(editingId == null ? "Новое блюдо" : "Редактировать блюдо")</h5>
+                    <button type="button" class="btn-close" @onclick="() => showModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3"><label class="form-label small">Название *</label><input required minlength="2" maxlength="120" class="form-control" @bind="form.Name" /></div>
+                    <div class="row g-2">
+                        <div class="col-6"><label class="form-label small">Цена *</label><input required step="0.01" max="1000000" class="form-control" type="number" min="0.01" @bind="form.Price" /></div>
+                        <div class="col-6">
+                            <label class="form-label small">Категория *</label>
+                            <select data-choice="true" class="form-select" @bind="form.MenuCategoryID">
+                                <option value="">— выбрать —</option>
+                                @foreach (var c in categories)
+                                {
+                                    <option value="@c.MenuCategoryID">@c.Name</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <label class="form-label small">Кухонная станция</label>
+                        <input required minlength="2" maxlength="80" class="form-control" @bind="form.KitchenStation" placeholder="Например: Горячий цех" />
+                    </div>
+                    <div class="row g-2 mt-2">
+                        <div class="col-6"><label class="form-label small">Масса, г</label><input class="form-control" type="number" min="0" max="100000" @bind="form.WeightGrams" /></div>
+                        <div class="col-6"><label class="form-label small">Калорийность, ккал</label><input class="form-control" type="number" min="0" max="100000" step="0.1" @bind="form.Calories" /></div>
+                    </div>
+                    <div class="mt-3">
+                        <label class="form-label small">Фотография блюда (JPEG, PNG или WebP; до 5 МБ)</label>
+                        <InputFile class="form-control" accept="image/jpeg,image/png,image/webp" OnChange="OnImageSelected" />
+                        @if (imagePreview is not null)
+                        {
+                            <img src="@imagePreview" alt="Предпросмотр фотографии" class="mt-2 rounded" style="max-width:100%;max-height:180px;object-fit:cover" />
+                        }
+                        else if (!string.IsNullOrWhiteSpace(form.ImageUrl))
+                        {
+                            <div class="form-text">Сохранена ссылка на прежнее изображение. Можно загрузить фотографию в БД.</div>
+                        }
+                    </div>
+                    <div class="mt-3"><label class="form-label small">Состав и описание</label><textarea  maxlength="2000" class="form-control" rows="3" @bind="form.Description" placeholder="Например: курица, сливочный соус, пармезан"></textarea></div>
+                    <div class="mt-3"><label class="form-label small">БЖУ на порцию, граммы</label><div class="row g-2"><div class="col-4"><input required max="10000" class="form-control" type="number" min="0" step="0.1" @bind="form.Protein" placeholder="Белки" /></div><div class="col-4"><input required max="10000" class="form-control" type="number" min="0" step="0.1" @bind="form.Fat" placeholder="Жиры" /></div><div class="col-4"><input required max="10000" class="form-control" type="number" min="0" step="0.1" @bind="form.Carbohydrates" placeholder="Углеводы" /></div></div></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => showModal = false">Отмена</button>
+                    <button class="btn btn-warning" data-validate="true" @onclick="Save">Сохранить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (selectedDetails is not null)
+{
+    <div class="modal show d-block" tabindex="-1" style="background:rgba(28,20,15,.62);z-index:1060" role="dialog" aria-modal="true" aria-label="Информация о блюде">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content border-0 shadow-lg overflow-hidden">
+                <div class="row g-0">
+                    <div class="col-md-5 bg-light d-flex align-items-center justify-content-center dish-detail-image" style="min-height:280px">
+                        @if (GetImageSource(selectedDetails) is string detailsImage)
+                        {
+                            <img src="@detailsImage" alt="@selectedDetails.Name" class="w-100 h-100" style="min-height:280px;object-fit:cover" />
+                        }
+                        else
+                        {
+                            <div class="text-center text-secondary p-5"><i class="bi bi-egg-fried" style="font-size:76px;color:#a7472a"></i><div class="small mt-2">Фотография блюда пока не добавлена</div></div>
+                        }
+                    </div>
+                    <div class="col-md-7">
+                        <div class="modal-header border-0 pb-0"><span class="dish-detail-category">@selectedDetails.Category</span><button type="button" class="btn-close" aria-label="Закрыть" @onclick="CloseDetails"></button></div>
+                        <div class="modal-body pt-2">
+                            <h3 class="fw-bold">@selectedDetails.Name</h3>
+                            <div class="fs-3 fw-bold text-danger mb-3">@selectedDetails.Price.ToString("N0") ₽</div>
+                            <div class="dish-detail-meta mb-3"><i class="bi bi-fire me-1"></i>Кухня: @(string.IsNullOrWhiteSpace(selectedDetails.KitchenStation) ? "Общая кухня" : selectedDetails.KitchenStation)@if (!selectedDetails.IsAvailable) { <span class="ms-2 text-danger fw-bold">· Сейчас недоступно</span> }</div>
+                            <h6 class="fw-bold mb-1">Состав и описание</h6>
+                            <p class="dish-detail-copy mb-3">@(string.IsNullOrWhiteSpace(selectedDetails.Description) ? "Состав и описание пока не указаны. Уточните подробности у сотрудника ресторана." : selectedDetails.Description)</p>
+                            <div class="d-flex gap-2 flex-wrap mb-3"><span class="dish-detail-metric"><i class="bi bi-speedometer2"></i>Масса: @selectedDetails.WeightGrams г</span><span class="dish-detail-metric"><i class="bi bi-fire"></i>Калорийность: @selectedDetails.Calories.ToString("0.#") ккал</span></div>
+                            <h6 class="fw-bold mb-2">БЖУ на порцию</h6>
+                            <div class="dish-detail-nutrition"><span class="dish-detail-metric">Белки: @selectedDetails.Protein.ToString("0.#") г</span><span class="dish-detail-metric">Жиры: @selectedDetails.Fat.ToString("0.#") г</span><span class="dish-detail-metric">Углеводы: @selectedDetails.Carbohydrates.ToString("0.#") г</span></div>
+                        </div>
+                        <div class="modal-footer border-0">
+                            @if (IsGuestOrder)
+                            {
+                                <button type="button" class="btn btn-danger" disabled="@(!selectedDetails.IsAvailable)" @onclick="() => ChangeOrderQuantity(selectedDetails.MenuItemID, 1)"><i class="bi bi-plus-lg me-1"></i>Добавить в заказ</button>
+                            }
+                            <button type="button" class="btn btn-secondary" @onclick="CloseDetails">Закрыть</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (showCategoryModal)
+{
+    <div class="modal show d-block" tabindex="-1" style="background:rgba(0,0,0,.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Категории меню</h5>
+                    <button type="button" class="btn-close" @onclick="() => showCategoryModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex gap-2 mb-3">
+                        <input required minlength="2" maxlength="80" class="form-control" placeholder="Новая категория" @bind="newCategoryName" />
+                        <button class="btn btn-warning" data-validate="true" @onclick="AddCategory">Добавить</button>
+                    </div>
+                    <ul class="list-group">
+                        @foreach (var c in categories)
+                        {
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                @c.Name
+                                <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteCategory(c.MenuCategoryID)">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </li>
+                        }
+                    </ul>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => showCategoryModal = false">Закрыть</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<RestaurantBlazor.Models.MenuItem>? items;
+    private List<MenuCategory> categories = new();
+    private bool showModal;
+    private bool showCategoryModal;
+    private string newCategoryName = "";
+    private int? editingId;
+    private RestaurantBlazor.Models.MenuItem? selectedDetails;
+    private CreateMenuItemRequest form = new();
+    private string? imagePreview;
+    private string errorMessage = "";
+    private string successMessage = "";
+    [SupplyParameterFromQuery(Name = "orderType")] public string? OrderType { get; set; }
+    [SupplyParameterFromQuery(Name = "branchId")] public int? BranchId { get; set; }
+    [SupplyParameterFromQuery(Name = "tableId")] public int? TableId { get; set; }
+    [SupplyParameterFromQuery(Name = "deliveryAddress")] public string? DeliveryAddress { get; set; }
+    [SupplyParameterFromQuery(Name = "deliveryPhone")] public string? DeliveryPhone { get; set; }
+    private readonly Dictionary<int, int> orderItems = new();
+    private List<BranchDto> branches = new();
+    private List<RestaurantTable> tables = new();
+    private bool isSubmittingOrder;
+    private int? createdOrderId;
+    private bool IsGuestOrder => AuthService.GetCurrentRole() == 6 && (OrderType is "DineIn" or "Delivery" or "Takeaway");
+    private bool IsDineInOrder => IsGuestOrder && OrderType == "DineIn";
+    private string SelectedBranchName => branches.FirstOrDefault(x => x.BranchID == BranchId)?.Name ?? $"Филиал {BranchId}";
+    private int SelectedTableNumber => tables.FirstOrDefault(x => x.TableID == TableId)?.Number ?? 0;
+    private string OrderContext => OrderType switch
+    {
+        "DineIn" => $"{SelectedBranchName} · Стол {SelectedTableNumber}",
+        "Delivery" => $"Доставка · {SelectedBranchName} · {DeliveryAddress}",
+        "Takeaway" => $"Самовывоз · {SelectedBranchName}",
+        _ => ""
+    };
+    private decimal OrderTotal => orderItems.Sum(x => x.Value * (items?.FirstOrDefault(m => m.MenuItemID == x.Key)?.Price ?? 0));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthService.InitializeAsync();
+        if (!AuthService.IsAuthenticated()) { Nav.NavigateTo("/", forceLoad: true); return; }
+        if (AuthService.GetCurrentRole() is not (1 or 4 or 6)) { Nav.NavigateTo("/home", forceLoad: true); return; }
+        if (IsGuestOrder)
+        {
+            branches = await Api.GetBranchesAsync();
+            if (BranchId is > 0)
+                tables = await Api.GetTablesAsync(BranchId);
+
+            if (BranchId is null or <= 0 || !branches.Any(b => b.BranchID == BranchId))
+                errorMessage = "Не удалось определить филиал. Вернитесь в зал гостя и выберите его заново.";
+            else if (IsDineInOrder && (TableId is null or <= 0 || !tables.Any(t => t.TableID == TableId)))
+                errorMessage = "Не удалось определить стол. Вернитесь в зал гостя и выберите его заново.";
+            else if (OrderType == "Delivery" && Ochag.Validation.InputRules.DeliveryError(DeliveryAddress ?? "", DeliveryPhone ?? "") is string deliveryError)
+                errorMessage = deliveryError;
+        }
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        items = await Api.GetMenuAsync(IsGuestOrder ? BranchId : null);
+        categories = await Api.GetCategoriesAsync(IsGuestOrder ? BranchId : null);
+    }
+
+    private int GetOrderQuantity(int id) => orderItems.TryGetValue(id, out var quantity) ? quantity : 0;
+
+    private void ChangeOrderQuantity(int id, int delta)
+    {
+        var next = GetOrderQuantity(id) + delta;
+        if (next <= 0) orderItems.Remove(id);
+        else orderItems[id] = next;
+    }
+
+    private async Task PlaceGuestOrder()
+    {
+        if (!IsGuestOrder || isSubmittingOrder || orderItems.Count == 0 || createdOrderId.HasValue) return;
+        if (BranchId is null or <= 0 || !branches.Any(b => b.BranchID == BranchId))
+        {
+            errorMessage = "Не удалось определить филиал. Вернитесь в зал гостя и выберите его заново.";
+            return;
+        }
+        if (IsDineInOrder && (TableId is null or <= 0 || !tables.Any(t => t.TableID == TableId)))
+        {
+            errorMessage = "Не удалось определить стол. Вернитесь в зал гостя и выберите его заново.";
+            return;
+        }
+        if (OrderType == "Delivery" && Ochag.Validation.InputRules.DeliveryError(DeliveryAddress ?? "", DeliveryPhone ?? "") is string deliveryError)
+        {
+            errorMessage = deliveryError;
+            return;
+        }
+
+        isSubmittingOrder = true;
+        errorMessage = "";
+        try
+        {
+            var response = await Api.CreateOrderAsync(new CreateOrderRequest
+            {
+                TableID = IsDineInOrder ? TableId!.Value : 0,
+                BranchID = BranchId.Value,
+                Type = OrderType!,
+                PickupAddress = branches.First(b => b.BranchID == BranchId).Address,
+                WaiterID = AuthService.GetCurrentUserId(),
+                Items = orderItems.Select(x => new OrderItemRequest { MenuItemID = x.Key, Quantity = x.Value }).ToList()
+            });
+            if (response?.Status != true)
+            {
+                errorMessage = response?.Message ?? "Не удалось оформить заказ.";
+                return;
+            }
+
+            createdOrderId = response.OrderId;
+            orderItems.Clear();
+            if (OrderType == "Delivery" && createdOrderId > 0)
+            {
+                var deliveryResult = await Api.CreateDeliveryAsync(new CreateDeliveryRequest
+                {
+                    OrderID = createdOrderId.Value,
+                    Address = DeliveryAddress ?? "",
+                    ClientPhone = DeliveryPhone ?? ""
+                });
+                if (deliveryResult?.Status != true)
+                {
+                    errorMessage = deliveryResult?.Message ?? $"Заказ №{createdOrderId} создан, но доставку оформить не удалось. Обратитесь к сотруднику.";
+                    return;
+                }
+            }
+
+            successMessage = OrderType == "DineIn"
+                ? $"Заказ №{createdOrderId} отправлен на кухню."
+                : OrderType == "Delivery"
+                    ? $"Заказ №{createdOrderId} оформлен. Доставка будет выполнена по указанному адресу."
+                    : $"Заказ №{createdOrderId} оформлен для самовывоза из филиала «{SelectedBranchName}».";
+        }
+        catch
+        {
+            errorMessage = "Не удалось связаться с сервером. Попробуйте оформить заказ ещё раз.";
+        }
+        finally { isSubmittingOrder = false; }
+    }
+
+    private void ShowCreate() { editingId = null; form = new(); imagePreview = null; showModal = true; }
+
+    private void ShowEdit(RestaurantBlazor.Models.MenuItem m)
+    {
+        editingId = m.MenuItemID;
+        form = new() { Name = m.Name, Price = m.Price, Category = m.Category, MenuCategoryID = m.MenuCategoryID, KitchenStation = m.KitchenStation, ImageUrl = m.ImageUrl, Description = m.Description, Protein = m.Protein, Fat = m.Fat, Carbohydrates = m.Carbohydrates, Calories = m.Calories, WeightGrams = m.WeightGrams, ImageData = m.ImageData, ImageMimeType = m.ImageMimeType };
+        imagePreview = GetImageSource(m);
+        showModal = true;
+    }
+
+    private async Task OnImageSelected(InputFileChangeEventArgs args)
+    {
+        var file = args.File;
+        if (file.Size <= 0 || file.Size > 5 * 1024 * 1024)
+        { errorMessage = "Размер фотографии не должен превышать 5 МБ."; AutoHide(); return; }
+        if (file.ContentType is not ("image/jpeg" or "image/png" or "image/webp"))
+        { errorMessage = "Поддерживаются изображения JPEG, PNG и WebP."; AutoHide(); return; }
+        await using var stream = file.OpenReadStream(5 * 1024 * 1024);
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer);
+        form.ImageData = buffer.ToArray();
+        form.ImageMimeType = file.ContentType;
+        form.ImageUrl = "";
+        imagePreview = $"data:{form.ImageMimeType};base64,{Convert.ToBase64String(form.ImageData)}";
+    }
+
+    private static string? GetImageSource(RestaurantBlazor.Models.MenuItem item) =>
+        item.ImageData is { Length: > 0 } && !string.IsNullOrWhiteSpace(item.ImageMimeType)
+            ? $"data:{item.ImageMimeType};base64,{Convert.ToBase64String(item.ImageData)}"
+            : string.IsNullOrWhiteSpace(item.ImageUrl) ? null : item.ImageUrl;
+
+    private void ShowDetails(RestaurantBlazor.Models.MenuItem item) => selectedDetails = item;
+    private void CloseDetails() => selectedDetails = null;
+    private void OnCardKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs args, RestaurantBlazor.Models.MenuItem item)
+    {
+        if (args.Key is "Enter" or " ") ShowDetails(item);
+    }
+
+    private async Task AddCategory()
+    {
+        if (string.IsNullOrWhiteSpace(newCategoryName)) return;
+        var r = await Api.CreateCategoryAsync(newCategoryName.Trim());
+        if (r?.Status == true) { newCategoryName = ""; categories = await Api.GetCategoriesAsync(); }
+        else { errorMessage = r?.Message ?? "Ошибка"; AutoHide(); }
+    }
+
+    private async Task DeleteCategory(int id)
+    {
+        var r = await Api.DeleteCategoryAsync(id);
+        if (r?.Status == true) categories = await Api.GetCategoriesAsync();
+    }
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(form.Name) || !form.MenuCategoryID.HasValue)
+        { errorMessage = "Заполните поля"; AutoHide(); return; }
+        if (form.Price <= 0) { errorMessage = "Цена должна быть больше 0"; AutoHide(); return; }
+
+        var r = editingId == null
+            ? await Api.CreateMenuItemAsync(form)
+            : await Api.UpdateMenuItemAsync(editingId.Value, form);
+
+        if (r?.Status == true) { successMessage = "Сохранено"; showModal = false; await Load(); }
+        else errorMessage = r?.Message ?? "Ошибка";
+        AutoHide();
+    }
+
+    private async Task Delete(int id)
+    {
+        var r = await Api.DeleteMenuItemAsync(id);
+        if (r?.Status == true) { successMessage = "Скрыто"; await Load(); }
+        else errorMessage = r?.Message ?? "Ошибка";
+        AutoHide();
+    }
+
+    private async Task Toggle(int id)
+    {
+        var r = await Api.ToggleMenuItemAsync(id);
+        if (r?.Status == true) { successMessage = r.Message ?? "Готово"; await Load(); }
+        else errorMessage = r?.Message ?? "Ошибка";
+        AutoHide();
+    }
+
+    private void AutoHide()
+    {
+        _ = Task.Delay(2500).ContinueWith(_ =>
+        {
+            errorMessage = ""; successMessage = "";
+            InvokeAsync(StateHasChanged);
+        });
+    }
+}

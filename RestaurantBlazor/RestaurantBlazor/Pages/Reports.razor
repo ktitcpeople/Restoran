@@ -1,0 +1,406 @@
+@page "/reports"
+@layout MainLayout
+@using RestaurantBlazor.Services
+@using RestaurantBlazor.Models
+@inject ApiService Api
+@inject IAuthService AuthService
+@inject NavigationManager Nav
+
+<PageTitle>Отчёты</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="fw-bold mb-1"><i class="bi bi-graph-up-arrow me-2"></i>Отчёты</h2>
+        <div class="text-muted small">Аналитика и финансы</div>
+    </div>
+    <!-- Табы -->
+    <ul class="nav nav-pills">
+        <li class="nav-item"><button class="nav-link @(activeTab == "revenue" ? "active" : "")" @onclick='() => activeTab = "revenue"'>Выручка</button></li>
+        <li class="nav-item"><button class="nav-link @(activeTab == "cost" ? "active" : "")" @onclick='() => SwitchTab("cost")'>Себестоимость</button></li>
+        <li class="nav-item"><button class="nav-link @(activeTab == "kitchen" ? "active" : "")" @onclick='() => SwitchTab("kitchen")'>Кухня</button></li>
+        <li class="nav-item"><button class="nav-link @(activeTab == "hall" ? "active" : "")" @onclick='() => SwitchTab("hall")'>Зал</button></li>
+        <li class="nav-item"><button class="nav-link @(activeTab == "staff" ? "active" : "")" @onclick='() => SwitchTab("staff")'>Персонал</button></li>
+    </ul>
+</div>
+
+<!-- ============ ВЫРУЧКА ============ -->
+@if (activeTab == "revenue")
+{
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-12 col-md-4">
+                    <label class="form-label small">С даты</label>
+                    <input required class="form-control" type="date" max="@DateTime.Today.ToString("yyyy-MM-dd")" @bind="from" />
+                </div>
+                <div class="col-12 col-md-4">
+                    <label class="form-label small">По дату</label>
+                    <input required class="form-control" type="date" min="@from.ToString("yyyy-MM-dd")" max="@DateTime.Today.ToString("yyyy-MM-dd")" @bind="to" />
+                </div>
+                <div class="col-12 col-md-4">
+                    <button class="btn btn-warning w-100" @onclick="LoadRevenue">
+                        <i class="bi bi-search me-1"></i>Получить отчёт
+                    </button>
+                </div>
+                @if (!string.IsNullOrEmpty(reportError))
+                {
+                    <div class="col-12"><div class="alert alert-warning py-2 mb-0 mt-2">@reportError</div></div>
+                }
+            </div>
+        </div>
+    </div>
+
+    @if (revenue != null)
+    {
+        <div class="row g-3 mb-4 row-cols-1 row-cols-md-3">
+            <div class="col">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body d-flex justify-content-between align-items-center">
+                        <div><div class="text-muted small mb-1">Заказов</div><div class="fs-2 fw-bold lh-1">@revenue.OrderCount</div></div>
+                        <div class="d-inline-flex align-items-center justify-content-center rounded-circle" style="width:44px;height:44px;background:#dbeafe;color:#1e40af;"><i class="bi bi-receipt-cutoff fs-5"></i></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body d-flex justify-content-between align-items-center">
+                        <div><div class="text-muted small mb-1">Выручка</div><div class="fs-2 fw-bold lh-1 text-success">@revenue.TotalRevenue.ToString("N0") ₽</div></div>
+                        <div class="d-inline-flex align-items-center justify-content-center rounded-circle" style="width:44px;height:44px;background:#dcfce7;color:#15803d;"><i class="bi bi-cash-stack fs-5"></i></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body d-flex justify-content-between align-items-center">
+                        <div><div class="text-muted small mb-1">Средний чек</div><div class="fs-2 fw-bold lh-1">@revenue.AverageCheck.ToString("N0") ₽</div></div>
+                        <div class="d-inline-flex align-items-center justify-content-center rounded-circle" style="width:44px;height:44px;background:#fef3c7;color:#d97706;"><i class="bi bi-graph-up fs-5"></i></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <div class="row g-3">
+        <div class="col-12 col-lg-6">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-bottom">
+                    <h6 class="fw-bold mb-0"><i class="bi bi-fire me-2 text-warning"></i>Популярные блюда</h6>
+                </div>
+                @if (!popular.Any())
+                {
+                    <div class="card-body text-center py-5"><i class="bi bi-bar-chart text-muted" style="font-size:42px;"></i><p class="text-muted mb-0 mt-2">Нет данных</p></div>
+                }
+                else
+                {
+                    <ul class="list-group list-group-flush">
+                        @foreach (var p in popular)
+                        {
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>@p.Name</span>
+                                <span>
+                                    <span class="badge bg-secondary me-2">@p.TotalOrdered шт.</span>
+                                    <strong>@p.TotalRevenue.ToString("N0") ₽</strong>
+                                </span>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+        </div>
+        <div class="col-12 col-lg-6">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-bottom">
+                    <h6 class="fw-bold mb-0"><i class="bi bi-box-seam me-2 text-warning"></i>Остатки склада</h6>
+                </div>
+                @if (stockReport == null)
+                {
+                    <div class="card-body text-muted text-center py-4">Загрузка...</div>
+                }
+                else
+                {
+                    <div class="card-body">
+                        <p class="mb-2">Всего ингредиентов: <strong>@stockReport.Ingredients.Count</strong></p>
+                        @if (stockReport.LowStockCount > 0)
+                        {
+                            <div class="alert alert-warning d-flex align-items-center mb-3">
+                                <i class="bi bi-exclamation-triangle me-2"></i>
+                                Низких остатков: <strong class="ms-1">@stockReport.LowStockCount</strong>
+                            </div>
+                            <ul class="list-group">
+                                @foreach (var i in stockReport.LowStockItems)
+                                {
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>@i.Name</span>
+                                        <span class="text-danger fw-bold">@i.Stock @UnitLabel(i.Unit)</span>
+                                    </li>
+                                }
+                            </ul>
+                        }
+                        else
+                        {
+                            <p class="text-success mb-0"><i class="bi bi-check-circle me-1"></i>Все остатки в норме</p>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+<!-- ============ СЕБЕСТОИМОСТЬ ============ -->
+@if (activeTab == "cost")
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white border-bottom">
+            <h6 class="fw-bold mb-0"><i class="bi bi-calculator me-2"></i>Себестоимость блюд</h6>
+            <small class="text-muted">Рассчитывается на основе техкарт и цен ингредиентов</small>
+        </div>
+        @if (costReport == null || !costReport.Dishes.Any())
+        {
+            <div class="card-body text-center py-5">
+                <i class="bi bi-info-circle text-muted" style="font-size:42px;"></i>
+                <p class="text-muted mb-0 mt-2">Нет данных. Заполните техкарты и укажите цены ингредиентов.</p>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th class="ps-3">Блюдо</th>
+                            <th class="text-end">Цена продажи</th>
+                            <th class="text-end">Себестоимость</th>
+                            <th class="text-end">Прибыль</th>
+                            <th class="text-end pe-3">Маржа</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var d in costReport.Dishes)
+                        {
+                            <tr>
+                                <td class="ps-3 fw-semibold">@d.DishName</td>
+                                <td class="text-end">@d.SellingPrice.ToString("N0") ₽</td>
+                                <td class="text-end text-danger">@d.Cost.ToString("N2") ₽</td>
+                                <td class="text-end text-success fw-bold">@d.Profit.ToString("N2") ₽</td>
+                                <td class="text-end pe-3">
+                                    <span class="badge @(d.Margin >= 50 ? "bg-success" : d.Margin >= 30 ? "bg-warning text-dark" : "bg-danger")">
+                                        @d.Margin.ToString("N1")%
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+}
+
+<!-- ============ ЗАГРУЗКА КУХНИ ============ -->
+@if (activeTab == "kitchen")
+{
+    <div class="row g-3">
+        <div class="col-12 col-md-5">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-bottom">
+                    <h6 class="fw-bold mb-0"><i class="bi bi-pie-chart me-2"></i>Статусы за сегодня</h6>
+                </div>
+                @if (kitchenLoad == null)
+                {
+                    <div class="card-body text-center py-4">Загрузка...</div>
+                }
+                else
+                {
+                    <ul class="list-group list-group-flush">
+                        <li class="list-group-item d-flex justify-content-between"><span>Всего заказов</span><strong>@kitchenLoad.StatusStats.Total</strong></li>
+                        <li class="list-group-item d-flex justify-content-between"><span class="text-primary">Новые</span><strong>@kitchenLoad.StatusStats.NewCount</strong></li>
+                        <li class="list-group-item d-flex justify-content-between"><span class="text-warning">На кухне</span><strong>@kitchenLoad.StatusStats.PreparingCount</strong></li>
+                        <li class="list-group-item d-flex justify-content-between"><span class="text-success">Готовы</span><strong>@kitchenLoad.StatusStats.ReadyCount</strong></li>
+                        <li class="list-group-item d-flex justify-content-between"><span class="text-secondary">Оплачены</span><strong>@kitchenLoad.StatusStats.PaidCount</strong></li>
+                        <li class="list-group-item d-flex justify-content-between"><span class="text-danger">Отменены</span><strong>@kitchenLoad.StatusStats.CancelledCount</strong></li>
+                    </ul>
+                }
+            </div>
+        </div>
+        <div class="col-12 col-md-7">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-bottom">
+                    <h6 class="fw-bold mb-0"><i class="bi bi-clock-history me-2"></i>Загрузка по часам</h6>
+                </div>
+                @if (kitchenLoad == null || !kitchenLoad.ByHour.Any())
+                {
+                    <div class="card-body text-center py-4 text-muted">Нет данных за сегодня</div>
+                }
+                else
+                {
+                    <div class="card-body">
+                        @{
+                            var maxOrders = kitchenLoad.ByHour.Max(h => h.OrderCount);
+                        }
+                        @foreach (var h in kitchenLoad.ByHour)
+                        {
+                            var pct = maxOrders > 0 ? (int)((double)h.OrderCount / maxOrders * 100) : 0;
+                            <div class="d-flex align-items-center mb-2 gap-2">
+                                <span class="text-muted" style="width:40px;font-size:13px;">@h.Hour:00</span>
+                                <div class="flex-grow-1 bg-light rounded" style="height:20px;">
+                                    <div class="bg-warning rounded" style="width:@pct%;height:100%;"></div>
+                                </div>
+                                <span class="text-muted" style="width:60px;font-size:13px;text-align:right;">@h.OrderCount зак.</span>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+<!-- ============ ЗАГРУЗКА ЗАЛА ============ -->
+@if (activeTab == "hall")
+{
+    <div class="row g-3">
+        <div class="col-12 col-md-5">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-bottom">
+                    <h6 class="fw-bold mb-0"><i class="bi bi-grid-3x3-gap-fill me-2"></i>Загрузка зала</h6>
+                </div>
+                @if (hallLoad == null)
+                {
+                    <div class="card-body text-center py-4">Загрузка...</div>
+                }
+                else
+                {
+                    <div class="card-body">
+                        <div class="text-center mb-3">
+                            <div class="display-4 fw-bold text-warning">@hallLoad.OccupancyRate%</div>
+                            <div class="text-muted small">занятость зала</div>
+                        </div>
+                        <div class="progress mb-3" style="height:12px;">
+                            <div class="progress-bar bg-warning" style="width:@hallLoad.OccupancyRate%;"></div>
+                        </div>
+                    </div>
+                    <ul class="list-group list-group-flush">
+                        <li class="list-group-item d-flex justify-content-between"><span>Всего столов</span><strong>@hallLoad.TotalTables</strong></li>
+                        <li class="list-group-item d-flex justify-content-between"><span class="text-warning">Занятых</span><strong>@hallLoad.OccupiedTables</strong></li>
+                        <li class="list-group-item d-flex justify-content-between"><span class="text-info">Зарезервировано</span><strong>@hallLoad.ReservedTables</strong></li>
+                        <li class="list-group-item d-flex justify-content-between"><span class="text-success">Свободных</span><strong>@hallLoad.FreeTables</strong></li>
+                        <li class="list-group-item d-flex justify-content-between"><span>Активных заказов в зале</span><strong>@hallLoad.DineInOrders</strong></li>
+                    </ul>
+                }
+            </div>
+        </div>
+        <div class="col-12 col-md-7">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white border-bottom">
+                    <h6 class="fw-bold mb-0"><i class="bi bi-calendar-week me-2"></i>Бронирования на сегодня</h6>
+                </div>
+                @if (hallLoad == null)
+                {
+                    <div class="card-body text-center py-4">Загрузка...</div>
+                }
+                else if (!hallLoad.ReservationsToday.Any())
+                {
+                    <div class="card-body text-center py-5 text-muted">
+                        <i class="bi bi-calendar-x" style="font-size:36px;"></i>
+                        <p class="mb-0 mt-2">Бронирований на сегодня нет</p>
+                    </div>
+                }
+                else
+                {
+                    <ul class="list-group list-group-flush">
+                        @foreach (var r in hallLoad.ReservationsToday)
+                        {
+                            <li class="list-group-item">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <div class="fw-semibold">@r.GuestName</div>
+                                        <small class="text-muted">Стол @r.TableNumber · @r.Persons чел.</small>
+                                    </div>
+                                    <span class="badge bg-info">@r.Time</span>
+                                </div>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@if (activeTab == "staff")
+{
+    <div class="card border-0 shadow-sm"><div class="card-header bg-white fw-bold">Результаты за выбранный период</div><div class="card-body">
+        @if (staffPerformance == null) { <div class="text-muted">Нет данных</div> }
+        else
+        {
+            <h5>Официанты</h5><div class="table-responsive"><table class="table"><thead><tr><th>Сотрудник</th><th>Оплачено заказов</th><th>Выручка</th><th>Средний чек</th></tr></thead><tbody>@foreach (var w in staffPerformance.Waiters){<tr><td>@w.UserName</td><td>@w.OrderCount</td><td>@w.Revenue.ToString("N2") ₽</td><td>@w.AverageCheck.ToString("N2") ₽</td></tr>}</tbody></table></div>
+            <h5 class="mt-4">Повара</h5><div class="table-responsive"><table class="table"><thead><tr><th>Сотрудник</th><th>Готовых заказов</th><th>Среднее время приготовления</th></tr></thead><tbody>@foreach (var c in staffPerformance.Cooks){<tr><td>@c.UserName</td><td>@c.CompletedOrders</td><td>@c.AveragePreparationMinutes.ToString("N1") мин</td></tr>}</tbody></table></div>
+            <h5 class="mt-4">Курьеры</h5><div class="table-responsive"><table class="table"><thead><tr><th>Сотрудник</th><th>Назначено</th><th>Доставлено</th></tr></thead><tbody>@foreach (var c in staffPerformance.Couriers){<tr><td>@c.UserName</td><td>@c.AssignedCount</td><td>@c.DeliveredCount</td></tr>}</tbody></table></div>
+        }
+        <button class="btn btn-outline-secondary btn-sm" @onclick="LoadStaffPerformance">Обновить отчёт</button>
+    </div></div>
+}
+
+@code {
+    private string activeTab = "revenue";
+    private DateTime from = DateTime.Today.AddDays(-7);
+    private DateTime to = DateTime.Today;
+    private RevenueReport? revenue;
+    private List<PopularDish> popular = new();
+    private StockReport? stockReport;
+    private string? reportError;
+    private CostReportResponse? costReport;
+    private KitchenLoadReport? kitchenLoad;
+    private HallLoadReport? hallLoad;
+    private StaffPerformanceResponse? staffPerformance;
+
+    private static string UnitLabel(string? unit) => unit?.Trim().ToLowerInvariant() switch
+    {
+        "kg" or "кг" => "кг",
+        "pcs" or "pc" or "шт" => "шт.",
+        "g" or "гр" or "г" => "г",
+        "l" or "л" => "л",
+        "ml" or "мл" => "мл",
+        "pack" or "уп" => "уп.",
+        "bottle" or "бутылка" => "бут.",
+        _ => unit?.Trim() ?? ""
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthService.InitializeAsync();
+        if (!AuthService.IsAuthenticated()) { Nav.NavigateTo("/", forceLoad: true); return; }
+        if (AuthService.GetCurrentRole() != 1) { Nav.NavigateTo("/home", forceLoad: true); return; }
+
+        await LoadRevenue();
+        popular = await Api.GetPopularDishesAsync();
+        stockReport = await Api.GetStockReportAsync();
+    }
+
+    private async Task SwitchTab(string tab)
+    {
+        activeTab = tab;
+        if (tab == "cost" && costReport == null)
+            costReport = await Api.GetCostReportAsync();
+        else if (tab == "kitchen" && kitchenLoad == null)
+            kitchenLoad = await Api.GetKitchenLoadAsync();
+        else if (tab == "hall" && hallLoad == null)
+            hallLoad = await Api.GetHallLoadAsync();
+        else if (tab == "staff")
+            await LoadStaffPerformance();
+    }
+
+    private async Task LoadStaffPerformance() => staffPerformance = await Api.GetStaffPerformanceAsync(from, to.AddDays(1));
+
+    private async Task LoadRevenue()
+    {
+        reportError = null;
+        if (from > DateTime.Today) { reportError = "«С» не может быть в будущем"; return; }
+        if (to > DateTime.Today) { reportError = "«По» не может быть в будущем"; return; }
+        if (from > to) { reportError = "«С» не может быть позже «По»"; return; }
+        revenue = await Api.GetRevenueReportAsync(from, to.AddDays(1));
+        if (revenue == null)
+            reportError = "Не удалось получить отчёт. Проверьте соединение с сервером и выбранный период.";
+    }
+}

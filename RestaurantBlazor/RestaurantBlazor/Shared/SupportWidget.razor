@@ -1,0 +1,114 @@
+@implements IAsyncDisposable
+@inject ApiService Api
+@inject IAuthService Auth
+@inject KitchenHubService Hub
+
+<button class="support-launcher" @onclick="Toggle">💬 Поддержка</button>
+@if (isOpen)
+{
+        <section class="support-panel shadow-lg" aria-label="Чат технической поддержки">
+            <header class="support-header"><strong>Поддержка ресторана</strong><button class="btn-close btn-close-white" @onclick="Toggle"></button></header>
+            <div class="support-history">
+                <button class="btn btn-sm btn-outline-secondary" @onclick="NewConversation">Новый вопрос</button>
+                @foreach (var c in conversations.Take(8))
+                {
+                    <button class="support-history-item @(currentConversation == c.ConversationID ? "active" : "")" @onclick="() => SelectConversation(c.ConversationID)">Диалог #@c.ConversationID · @c.Status</button>
+                }
+            </div>
+            <div class="support-messages" @ref="messageContainer">
+                @if (!messages.Any()) { <div class="text-muted small">Опишите вопрос по меню, бронированию, доставке или работе системы.</div> }
+                @foreach (var m in messages)
+                {
+                    <div class="support-message @(m.Sender == "user" ? "mine" : "")"><small>@(m.Sender == "operator" ? "Оператор" : "Вы")</small><div>@m.Content</div></div>
+                }
+                @if (!string.IsNullOrEmpty(error)) { <div class="text-danger small">@error</div> }
+                @if (!string.IsNullOrEmpty(sentNotice)) { <div class="alert alert-success py-2 small mb-0">@sentNotice</div> }
+            </div>
+            <form class="support-compose" @onsubmit="Send" @onsubmit:preventDefault>
+                <input class="form-control" @bind="draft" maxlength="4000" required placeholder="Ваш вопрос…" />
+                <button class="btn btn-warning" disabled="@sending">Отправить</button>
+            </form>
+        </section>
+}
+
+<style>
+    .support-launcher{position:fixed;right:22px;bottom:18px;z-index:1050;border:0;border-radius:24px;background:#c8102e;color:#fff;padding:12px 18px;box-shadow:0 5px 18px #0003;font-weight:600}
+    .support-panel{position:fixed;right:22px;bottom:76px;z-index:1050;width:min(390px,calc(100vw - 24px));height:min(570px,calc(100vh - 110px));background:#fff;border-radius:16px;display:flex;flex-direction:column;overflow:hidden}
+    .support-header{background:#8d1024;color:white;padding:14px 16px;display:flex;justify-content:space-between;align-items:center}
+    .support-history{display:flex;gap:6px;overflow-x:auto;padding:8px;border-bottom:1px solid #eee;white-space:nowrap}
+    .support-history-item{border:0;background:#f4f4f4;border-radius:12px;padding:5px 9px;font-size:11px}.support-history-item.active{background:#fde8eb;color:#991b1b}
+    .support-messages{padding:14px;overflow:auto;flex:1;display:flex;flex-direction:column;gap:9px}
+    .support-message{max-width:88%;align-self:flex-start;background:#f2f3f5;padding:8px 11px;border-radius:12px;white-space:pre-wrap;overflow-wrap:anywhere}.support-message small{display:block;font-weight:700;color:#6b7280;margin-bottom:3px}.support-message.mine{align-self:flex-end;background:#fde8eb}
+    .support-compose{padding:10px;border-top:1px solid #eee;display:flex;gap:8px}
+</style>
+
+@code {
+    private bool isOpen, sending;
+    private string draft = "", error = "", sentNotice = "";
+    private int? currentConversation;
+    private List<SupportConversationDto> conversations = new();
+    private List<SupportMessageDto> messages = new();
+    private ElementReference messageContainer;
+    private CancellationTokenSource? polling;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Hub.OnSupportReply += OnSupportReply;
+        Auth.Changed += OnAuthChanged;
+        await Auth.InitializeAsync();
+    }
+
+    private void OnAuthChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task Toggle()
+    {
+        isOpen = !isOpen;
+        if (!isOpen) { polling?.Cancel(); return; }
+        await Auth.InitializeAsync();
+        if (!Auth.IsAuthenticated())
+        {
+            error = "Войдите в систему, чтобы написать в поддержку.";
+            return;
+        }
+        try { await Hub.StartAsync(); await Hub.JoinSupportUserAsync(); }
+        catch { /* чат продолжает работать через HTTP, если SignalR недоступен */ }
+        await LoadConversations();
+        polling?.Cancel(); polling = new CancellationTokenSource();
+        _ = Poll(polling.Token);
+    }
+
+    private async Task Poll(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(4));
+        try { while (await timer.WaitForNextTickAsync(ct)) { if (isOpen && currentConversation.HasValue) await InvokeAsync(async () => messages = await Api.GetSupportMessagesAsync(currentConversation.Value)); } }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task LoadConversations()
+    {
+        conversations = await Api.GetSupportConversationsAsync();
+        if (currentConversation == null && conversations.Count > 0) await SelectConversation(conversations[0].ConversationID);
+    }
+
+    private async Task SelectConversation(int id) { currentConversation = id; messages = await Api.GetSupportMessagesAsync(id); }
+    private void NewConversation() { currentConversation = null; messages.Clear(); error = ""; sentNotice = ""; }
+
+    private async Task Send()
+    {
+        if (!Auth.IsAuthenticated()) { error = "Войдите в систему, чтобы отправить сообщение."; return; }
+        if (string.IsNullOrWhiteSpace(draft) || sending) return;
+        sending = true; error = ""; sentNotice = "";
+        var response = await Api.SendSupportMessageAsync(new SupportChatRequest { ConversationID = currentConversation, Message = draft.Trim() });
+        if (response?.Status == true)
+        {
+            draft = ""; currentConversation = response.ConversationID;
+            sentNotice = response.Message;
+            await LoadConversations(); await SelectConversation(response.ConversationID);
+        }
+        else error = response?.Message ?? "Не удалось отправить сообщение. Проверьте соединение и попробуйте снова.";
+        sending = false;
+    }
+
+    private void OnSupportReply(int conversationId, string message) { if (currentConversation == conversationId) _ = InvokeAsync(async () => messages = await Api.GetSupportMessagesAsync(conversationId)); }
+    public ValueTask DisposeAsync() { Hub.OnSupportReply -= OnSupportReply; Auth.Changed -= OnAuthChanged; polling?.Cancel(); polling?.Dispose(); return ValueTask.CompletedTask; }
+}

@@ -1,0 +1,182 @@
+@page "/login"
+@layout EmptyLayout
+@using RestaurantBlazor.Services
+@using RestaurantBlazor.Models
+@inject IAuthService AuthService
+@inject NavigationManager Nav
+
+<div class="auth-page min-vh-100 d-flex align-items-center justify-content-center" style="background:#f5f3ef; padding:24px;">
+    <div class="d-flex shadow-lg rounded-4 overflow-hidden bg-white" style="max-width:880px; width:100%; min-height:560px;">
+
+        <div class="auth-art d-none d-md-block position-relative" style="flex:1; min-width:340px;
+             background:linear-gradient(180deg, rgba(0,0,0,.15), rgba(26,26,26,.55)),
+                        url('img/hearth-scene.svg') center/cover no-repeat;">
+            <div class="position-absolute bottom-0 start-0 p-4 text-white">
+                <div class="d-inline-flex align-items-center justify-content-center rounded-circle mb-3"
+                     style="width:48px; height:48px; background:#c8102e;">
+                    <img class="hearth-logo" src="img/ochag-mark.svg" alt="Логотип Очаг" />
+                </div>
+                <h3 class="fw-bold mb-1">Очаг</h3>
+                <p class="text-white-50 small mb-0">Добро пожаловать в ресторан</p>
+            </div>
+        </div>
+
+        <div class="p-4 p-md-5" style="flex:1; min-width:340px;">
+            <div class="d-md-none text-center mb-4">
+                <div class="d-inline-flex align-items-center justify-content-center rounded-circle"
+                     style="width:56px; height:56px; background:#c8102e; color:#fff;">
+                    <img class="hearth-logo" src="img/ochag-mark.svg" alt="Логотип Очаг" />
+                </div>
+                <h4 class="fw-bold mt-2">Очаг</h4>
+            </div>
+
+            <h4 class="fw-bold mb-1">@(activeTab == "login" ? "Вход" : "Регистрация")</h4>
+            <p class="text-muted small mb-4">@(activeTab == "login" ? "Рады видеть вас у нашего очага" : "Присоединяйтесь к тёплым встречам")</p>
+
+            <ul class="nav nav-pills mb-4 p-1 rounded-pill" style="background:#f5f3ef;">
+                <li class="nav-item flex-fill">
+                    <button class="nav-link rounded-pill w-100"
+                            style="@(activeTab == "login" ? "background:#1a1a1a;color:#fff;" : "color:#1a1a1a;background:transparent;")"
+                            @onclick='() => activeTab = "login"'>Вход</button>
+                </li>
+                <li class="nav-item flex-fill">
+                    <button class="nav-link rounded-pill w-100"
+                            style="@(activeTab == "register" ? "background:#1a1a1a;color:#fff;" : "color:#1a1a1a;background:transparent;")"
+                            @onclick='() => activeTab = "register"'>Регистрация</button>
+                </li>
+            </ul>
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="alert alert-danger d-flex align-items-center py-2 small">
+                    <i class="bi bi-exclamation-circle me-2"></i>@errorMessage
+                </div>
+            }
+            @if (!string.IsNullOrEmpty(successMessage))
+            {
+                <div class="alert alert-success d-flex align-items-center py-2 small">
+                    <i class="bi bi-check-circle me-2"></i>@successMessage
+                </div>
+            }
+
+            <div style="min-height:300px;">
+                @if (activeTab == "login")
+                {
+                    <div class="mb-3">
+                        <label class="form-label small">Логин</label>
+                        <input required maxlength="64" type="text" class="form-control" @bind="loginModel.Login" placeholder="Введите логин" />
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label small">Пароль</label>
+                        <div class="input-group">
+                            <input required maxlength="128" type="@(showLoginPwd ? "text" : "password")" class="form-control"
+                                   @bind="loginModel.Password" placeholder="••••••••" />
+                            <button class="btn btn-outline-secondary" type="button"
+                                    tabindex="-1" @onclick="() => showLoginPwd = !showLoginPwd">
+                                <i class="bi @(showLoginPwd ? "bi-eye-slash" : "bi-eye")"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <button class="btn btn-warning w-100" data-validate="true" @onclick="HandleLogin" disabled="@isLoading">
+                        @if (isLoading) { <span class="spinner-border spinner-border-sm me-2"></span> }
+                        @(isLoading ? "Вход..." : "Войти")
+                    </button>
+                }
+                else
+                {
+                    <div class="mb-2">
+                        <label class="form-label small">Ваше имя</label>
+                        <input required minlength="2" data-kind="name" maxlength="80" type="text" class="form-control" @bind="registerModel.UserName" placeholder="Иван Иванов" />
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-12">
+                            <label class="form-label small">Дата рождения для скидки ко дню рождения</label>
+                            <input required type="date" max="@DateTime.Today.ToString("yyyy-MM-dd")" class="form-control" @bind="registerModel.BirthDate" />
+                        </div>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6">
+                            <label class="form-label small">Логин</label>
+                            <input required minlength="3" data-kind="login" maxlength="64" type="text" class="form-control" @bind="registerModel.Login" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">Пароль</label>
+                            <div class="input-group">
+                                <input required minlength="6" maxlength="128" type="@(showRegPwd ? "text" : "password")" class="form-control" @bind="registerModel.Password" />
+                                <button class="btn btn-outline-secondary" type="button"
+                                        tabindex="-1" @onclick="() => showRegPwd = !showRegPwd">
+                                    <i class="bi @(showRegPwd ? "bi-eye-slash" : "bi-eye")"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3"><label class="form-label small">Тип аккаунта</label><input class="form-control" value="Гость" disabled /></div>
+                    <button class="btn btn-warning w-100" data-validate="true" @onclick="HandleRegister" disabled="@isLoading">
+                        @if (isLoading) { <span class="spinner-border spinner-border-sm me-2"></span> }
+                        @(isLoading ? "Создание..." : "Создать аккаунт")
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string activeTab = "login";
+    private string errorMessage = "";
+    private string successMessage = "";
+    private bool isLoading = false;
+    private bool showLoginPwd = false;
+    private bool showRegPwd = false;
+    private AuthRequest loginModel = new();
+    private RegisterRequest registerModel = new() { Role = 4 };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthService.InitializeAsync();
+        if (AuthService.IsAuthenticated())
+            Nav.NavigateTo(AuthService.GetCurrentRole() switch { 4 => "/guest-home", 6 => "/support-operator", 7 => "/supplier", _ => "/home" }, forceLoad: true);
+    }
+
+    private async Task HandleLogin()
+    {
+        if (string.IsNullOrWhiteSpace(loginModel.Login) || string.IsNullOrWhiteSpace(loginModel.Password))
+        { errorMessage = "Введите логин и пароль"; return; }
+
+        var inputErrors = Ochag.Validation.InputRules.Validate(activeTab == "login" ? "/auth/login" : "/auth/register", System.Text.Json.JsonSerializer.SerializeToElement(activeTab == "login" ? (object)loginModel : registerModel));
+        if (inputErrors.Count > 0) { errorMessage = string.Join(" ", inputErrors.Values); return; }
+        isLoading = true; errorMessage = "";
+        try
+        {
+            var ok = await AuthService.LoginAsync(loginModel.Login, loginModel.Password);
+            if (ok) Nav.NavigateTo(AuthService.GetCurrentRole() switch { 4 => "/guest-home", 6 => "/support-operator", 7 => "/supplier", _ => "/home" }, forceLoad: true);
+            else errorMessage = "Неверный логин или пароль";
+        }
+        catch { errorMessage = "Ошибка соединения с сервером"; }
+        finally { isLoading = false; }
+    }
+
+    private async Task HandleRegister()
+    {
+        if (string.IsNullOrWhiteSpace(registerModel.Login) ||
+            string.IsNullOrWhiteSpace(registerModel.Password) ||
+            string.IsNullOrWhiteSpace(registerModel.UserName))
+        { errorMessage = "Заполните все поля"; return; }
+        if (registerModel.Password.Length < 6)
+        { errorMessage = "Пароль должен содержать минимум 6 символов"; return; }
+
+        isLoading = true; errorMessage = "";
+        try
+        {
+            var ok = await AuthService.RegisterAsync(registerModel);
+            if (ok)
+            {
+                successMessage = "Аккаунт создан, войдите";
+                activeTab = "login";
+                registerModel = new() { Role = 4 };
+            }
+            else errorMessage = "Логин уже занят или ошибка сервера";
+        }
+        finally { isLoading = false; }
+    }
+}
